@@ -1,0 +1,10 @@
+{
+  "name": "111-converter",
+  "compatibility_date": "2024-09-23",
+  "assets": {
+    "directory": "./public"
+  },
+  "routes": [
+    { "pattern": "111iridescence.org/converter*", "zone_name": "111iridescence.org" }
+  ]
+}
