@@ -2,7 +2,7 @@
 
 /* Drag & Drop Visuals */
 .drag-over {
-    background-color: #e0e7ff !important; /* Indigo-100 */
+    background-color: #e0e7ff !important;
     border: 2px dashed #6366f1;
 }
 
@@ -21,3 +21,19 @@
 
 /* Progress Bar Transition */
 .progress-bar { transition: width 0.2s linear; }
+
+/* OPTION INPUTS (The fix is here) */
+.opt-input {
+    background-color: white;
+    border: 1px solid #e2e8f0;
+    color: #475569;
+    font-size: 0.75rem;
+    padding: 6px;
+    border-radius: 6px;
+    outline: none;
+    width: 100%;
+}
+.opt-input:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3); /* Replaced 'ring' */
+}
