@@ -340,7 +340,7 @@ function downloadBlob(blob, originalName, ext, els) {
     const newName = originalName.substring(0, originalName.lastIndexOf('.')) + '.' + ext;
     els.act.innerHTML = `
         <a href="${url}" download="${newName}" class="mt-2 w-full bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold py-2 px-4 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2">
-            <span>⬇ Save ${ext.toUpperCase()}</span>
+            <span>Save ${ext.toUpperCase()}</span>
         </a>
     `;
 }
