@@ -12,9 +12,8 @@ const FORMATS = {
 const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
-    // NOUVELLES OPTIONS IMAGES PAR DÉFAUT
-    image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { pageSize: 'a4', orientation: 'portrait', margin: '10' }
+    image: { scale: '100', qual: '90', gray: 'no' }, // Options images
+    doc:   { margin: '10' }
 };
 
 let files = [];
@@ -29,7 +28,7 @@ const dom = {
     hiddenRenderer: document.getElementById('hidden-renderer')
 };
 
-// --- MOTEUR ---
+// --- INIT ENGINE ---
 async function initFFmpeg() {
     try {
         ffmpeg = createFFmpeg({ log: false });
@@ -37,7 +36,7 @@ async function initFFmpeg() {
         dom.status.className = "flex items-center gap-2 text-xs font-semibold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200";
         dom.status.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span> Engine Ready`;
     } catch (e) {
-        console.error("Engine failed:", e);
+        console.error("FFmpeg error:", e);
         dom.status.innerHTML = "Engine Error (Check Console)";
     }
 }
@@ -55,7 +54,7 @@ dom.dropZone.addEventListener('drop', (e) => {
 });
 document.getElementById('file-upload').addEventListener('change', (e) => handleFiles(e.target.files));
 
-// --- LOGIQUE FICHIERS ---
+// --- GESTION FICHIERS ---
 function getType(file) {
     if (file.name.endsWith('.docx')) return 'doc';
     if (file.type.startsWith('video/') || ['mkv','avi','mov'].some(x => file.name.endsWith(x))) return 'video';
@@ -70,7 +69,7 @@ function handleFiles(fileList) {
     Array.from(fileList).forEach(file => {
         const type = getType(file);
         if (type === 'unknown') {
-            showToast(`Error: ${file.name} non supporté.`, true);
+            showToast(`Format non supporté: ${file.name}`, true);
             return;
         }
 
@@ -104,13 +103,12 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input"><option value="medium">Med Q</option><option value="high">High Q</option><option value="low">Low Q</option></select>
         `;
     } else if (type === 'image') {
-        // --- NOUVELLES OPTIONS IMAGES (Interface) ---
         settingsHTML = `
              <select onchange="updateSet('${id}', 'scale', this.value)" class="opt-input">
-                <option value="100">Orig Size</option><option value="75">75% Size</option><option value="50">50% Size</option>
+                <option value="100">100% Size</option><option value="75">75% Size</option><option value="50">50% Size</option>
             </select>
             <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input">
-                <option value="90">High Qual</option><option value="75">Med Qual</option><option value="50">Low Qual</option>
+                <option value="90">High Q</option><option value="75">Med Q</option><option value="50">Low Q</option>
             </select>
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input">
                 <option value="no">Color</option><option value="yes">B&W</option>
@@ -118,8 +116,9 @@ function renderCard(id, file, type, defaultTarget) {
         `;
     } else if (type === 'doc') {
         settingsHTML = `
-             <select onchange="updateSet('${id}', 'pageSize', this.value)" class="opt-input"><option value="a4">A4</option><option value="letter">Letter</option></select>
-             <select onchange="updateSet('${id}', 'orientation', this.value)" class="opt-input"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select>
+             <select onchange="updateSet('${id}', 'margin', this.value)" class="opt-input">
+                <option value="10">Marge Normale</option><option value="0">Sans Marge</option><option value="20">Marge Large</option>
+            </select>
         `;
     }
 
@@ -157,7 +156,7 @@ function removeFile(id) {
     checkIfAllDone();
 }
 
-// --- CORE PROCESSOR ---
+// --- MOTEUR DE CONVERSION ---
 async function convertAll() {
     if(!ffmpeg && files.some(f => f.type !== 'doc')) return alert("Engine loading...");
     
@@ -189,36 +188,42 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX PROCESSOR (FIXED) ---
+        // --- 1. DOCX VERS PDF ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
             
-            // On s'assure que le renderer est visible (pour html2canvas) mais caché à l'utilisateur
-            // (Via l'opacité 0 définie dans index.html)
+            // On vide et prépare le conteneur
             dom.hiddenRenderer.innerHTML = "";
             
-            // Rendu fidèle avec docx-preview
-            await docx.renderAsync(arrayBuffer, dom.hiddenRenderer, null, { inWrapper: false, ignoreWidth: false });
+            // Rendu du DOCX en HTML (docx-preview)
+            // Note: ignoreWidth: false force l'utilisation de la largeur réelle
+            await docx.renderAsync(arrayBuffer, dom.hiddenRenderer, null, { 
+                inWrapper: false, 
+                ignoreWidth: false,
+                renderHeaders: true,
+                renderFooters: true
+            });
 
-            // **CORRECTION**: Petit délai pour laisser le temps aux images de s'afficher dans le DOM
-            await new Promise(r => setTimeout(r, 500));
+            // CRITIQUE : Petit délai pour laisser le navigateur dessiner les images
+            await new Promise(r => setTimeout(r, 1000));
 
-            els.stat.innerText = "Rendering PDF...";
+            els.stat.innerText = "Saving PDF...";
             
             const opt = {
                 margin: parseInt(f.settings.margin),
                 filename: f.file.name.replace('.docx', '.pdf'),
                 image: { type: 'jpeg', quality: 0.98 },
-                // useCORS est important si les images viennent d'ailleurs, scale augmente la netteté
-                html2canvas: { scale: 2, useCORS: true, scrollY: 0 },
-                jsPDF: { unit: 'mm', format: f.settings.pageSize, orientation: f.settings.orientation }
+                // scale: 2 améliore la netteté
+                html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
             };
 
+            // Conversion HTML -> PDF
             outBlob = await html2pdf().set(opt).from(dom.hiddenRenderer).output('blob');
-            dom.hiddenRenderer.innerHTML = ""; 
+            dom.hiddenRenderer.innerHTML = ""; // Nettoyage
         }
         
-        // --- 2. FFMPEG PROCESSOR ---
+        // --- 2. MULTIMEDIA (FFMPEG) ---
         else {
             const inName = `in_${f.id}.${f.file.name.split('.').pop()}`;
             const outName = `out_${f.id}.${f.target}`;
@@ -236,24 +241,15 @@ async function processFile(f) {
                     args.push('-crf', crf[s.qual], '-preset', 'ultrafast'); 
                 }
             }
-            
-            // --- LOGIQUE IMAGES (NOUVEAU) ---
+
             if (f.type === 'image') {
                 let filters = [];
-                // Redimensionnement
                 if (s.scale !== '100') filters.push(`scale=iw*${s.scale/100}:-1`);
-                // Noir et Blanc
                 if (s.gray === 'yes') filters.push('hue=s=0');
-                
                 if(filters.length > 0) args.push('-vf', filters.join(','));
                 
-                // Qualité (Uniquement pour JPG)
                 if(f.target === 'jpg' || f.target === 'jpeg') {
-                    // ffmpeg qscale: 2 (best) - 31 (worst)
-                    // Mapping: 90 -> 2, 75 -> 10, 50 -> 20
-                    let q = 2; 
-                    if(s.qual == '75') q = 10;
-                    if(s.qual == '50') q = 20;
+                    let q = s.qual === '90' ? 2 : (s.qual === '75' ? 10 : 20);
                     args.push('-q:v', q);
                 }
             }
@@ -284,11 +280,11 @@ async function processFile(f) {
         console.error(err);
         els.stat.innerText = "Error";
         els.stat.className = "text-xs font-bold text-red-500 mt-1 text-right";
-        showToast("Erreur conversion", true);
+        showToast("Erreur conversion: " + err.message, true);
     }
 }
 
-// --- DOWNLOAD ZIP ---
+// --- ZIP DOWNLOAD ---
 async function downloadAll() {
     const doneFiles = files.filter(f => f.status === 'done' && f.resultBlob);
     if(doneFiles.length === 0) return;
@@ -320,7 +316,6 @@ async function downloadAll() {
 function checkIfAllDone() {
     if (files.some(f => f.status === 'done')) {
         dom.downloadAllBtn.classList.remove('hidden');
-        // Animation supprimée
     } else {
         dom.downloadAllBtn.classList.add('hidden');
     }
