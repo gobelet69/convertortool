@@ -9,11 +9,11 @@ const FORMATS = {
     doc:   ['pdf']
 };
 
-// Paramètres par défaut
 const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
-    image: { scale: '100', qual: '90', gray: 'no' }, // Ajout options image
+    // NOUVELLES OPTIONS IMAGES PAR DÉFAUT
+    image: { scale: '100', qual: '90', gray: 'no' },
     doc:   { pageSize: 'a4', orientation: 'portrait', margin: '10' }
 };
 
@@ -104,13 +104,13 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input"><option value="medium">Med Q</option><option value="high">High Q</option><option value="low">Low Q</option></select>
         `;
     } else if (type === 'image') {
-        // NOUVELLES OPTIONS IMAGES
+        // --- NOUVELLES OPTIONS IMAGES (Interface) ---
         settingsHTML = `
              <select onchange="updateSet('${id}', 'scale', this.value)" class="opt-input">
-                <option value="100">100% Size</option><option value="75">75% Size</option><option value="50">50% Size</option>
+                <option value="100">Orig Size</option><option value="75">75% Size</option><option value="50">50% Size</option>
             </select>
             <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input">
-                <option value="90">High Q</option><option value="75">Med Q</option><option value="50">Low Q</option>
+                <option value="90">High Qual</option><option value="75">Med Qual</option><option value="50">Low Qual</option>
             </select>
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input">
                 <option value="no">Color</option><option value="yes">B&W</option>
@@ -157,7 +157,7 @@ function removeFile(id) {
     checkIfAllDone();
 }
 
-// --- CONVERSION ---
+// --- CORE PROCESSOR ---
 async function convertAll() {
     if(!ffmpeg && files.some(f => f.type !== 'doc')) return alert("Engine loading...");
     
@@ -189,15 +189,19 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX (Fix: utilise conteneur caché) ---
+        // --- 1. DOCX PROCESSOR (FIXED) ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
             
-            // On vide le conteneur caché
+            // On s'assure que le renderer est visible (pour html2canvas) mais caché à l'utilisateur
+            // (Via l'opacité 0 définie dans index.html)
             dom.hiddenRenderer.innerHTML = "";
             
-            // On dessine le Word dedans (fidélité visuelle)
+            // Rendu fidèle avec docx-preview
             await docx.renderAsync(arrayBuffer, dom.hiddenRenderer, null, { inWrapper: false, ignoreWidth: false });
+
+            // **CORRECTION**: Petit délai pour laisser le temps aux images de s'afficher dans le DOM
+            await new Promise(r => setTimeout(r, 500));
 
             els.stat.innerText = "Rendering PDF...";
             
@@ -205,16 +209,16 @@ async function processFile(f) {
                 margin: parseInt(f.settings.margin),
                 filename: f.file.name.replace('.docx', '.pdf'),
                 image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: { scale: 2, useCORS: true },
+                // useCORS est important si les images viennent d'ailleurs, scale augmente la netteté
+                html2canvas: { scale: 2, useCORS: true, scrollY: 0 },
                 jsPDF: { unit: 'mm', format: f.settings.pageSize, orientation: f.settings.orientation }
             };
 
-            // On capture le conteneur, pas un élément détaché !
             outBlob = await html2pdf().set(opt).from(dom.hiddenRenderer).output('blob');
             dom.hiddenRenderer.innerHTML = ""; 
         }
         
-        // --- 2. FFMPEG (Video/Audio/Image) ---
+        // --- 2. FFMPEG PROCESSOR ---
         else {
             const inName = `in_${f.id}.${f.file.name.split('.').pop()}`;
             const outName = `out_${f.id}.${f.target}`;
@@ -225,7 +229,6 @@ async function processFile(f) {
             let args = ['-i', inName];
             const s = f.settings;
 
-            // VIDEO OPTIONS
             if (f.type === 'video') {
                 if (s.res !== 'original') args.push('-vf', `scale=-2:${s.res}`);
                 if (s.qual) {
@@ -233,17 +236,25 @@ async function processFile(f) {
                     args.push('-crf', crf[s.qual], '-preset', 'ultrafast'); 
                 }
             }
-            // IMAGE OPTIONS (New)
+            
+            // --- LOGIQUE IMAGES (NOUVEAU) ---
             if (f.type === 'image') {
                 let filters = [];
-                if (s.scale !== '100') filters.push(`scale=iw*${s.scale/100}:ih*${s.scale/100}`);
+                // Redimensionnement
+                if (s.scale !== '100') filters.push(`scale=iw*${s.scale/100}:-1`);
+                // Noir et Blanc
                 if (s.gray === 'yes') filters.push('hue=s=0');
                 
                 if(filters.length > 0) args.push('-vf', filters.join(','));
                 
-                // Qualité (pour jpg)
+                // Qualité (Uniquement pour JPG)
                 if(f.target === 'jpg' || f.target === 'jpeg') {
-                    args.push('-q:v', Math.round((100 - s.qual) / 3)); // approx mapping
+                    // ffmpeg qscale: 2 (best) - 31 (worst)
+                    // Mapping: 90 -> 2, 75 -> 10, 50 -> 20
+                    let q = 2; 
+                    if(s.qual == '75') q = 10;
+                    if(s.qual == '50') q = 20;
+                    args.push('-q:v', q);
                 }
             }
 
@@ -309,6 +320,7 @@ async function downloadAll() {
 function checkIfAllDone() {
     if (files.some(f => f.status === 'done')) {
         dom.downloadAllBtn.classList.remove('hidden');
+        // Animation supprimée
     } else {
         dom.downloadAllBtn.classList.add('hidden');
     }
