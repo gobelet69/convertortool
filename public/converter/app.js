@@ -7,7 +7,7 @@ const FORMATS = {
     video: ['mp4', 'webm', 'avi', 'mov', 'mkv', 'gif', 'mp3'],
     audio: ['mp3', 'wav', 'aac', 'ogg', 'm4a'],
     image: ['jpg', 'png', 'webp', 'bmp', 'ico'],
-    doc:   ['pdf', 'html']
+    doc:   ['pdf'] // HTML removed to simplify layout focus
 };
 
 // Default States
@@ -15,18 +15,20 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100' },
-    doc:   { pageSize: 'a4', orientation: 'portrait', margin: '10' } // NEW: DOCX Defaults
+    doc:   { margin: '10' } 
 };
 
 // --- STATE ---
-let files = [];
+let files = []; // Stores { id, file, resultBlob, status... }
 
 const dom = {
     dropZone: document.getElementById('drop-zone'),
     fileList: document.getElementById('file-list'),
     empty: document.getElementById('empty-state'),
     status: document.getElementById('engine-status'),
-    convertBtn: document.getElementById('convert-all-btn')
+    convertBtn: document.getElementById('convert-all-btn'),
+    downloadAllBtn: document.getElementById('download-all-btn'),
+    hiddenRenderer: document.getElementById('hidden-renderer')
 };
 
 // --- INIT ENGINE ---
@@ -85,7 +87,7 @@ function handleFiles(fileList) {
         
         const settings = JSON.parse(JSON.stringify(DEFAULTS[type]));
 
-        files.push({ id, file, type, target: defaultTarget, settings, status: 'idle' });
+        files.push({ id, file, type, target: defaultTarget, settings, status: 'idle', resultBlob: null });
         renderCard(id, file, type, defaultTarget, settings);
     });
 }
@@ -98,7 +100,6 @@ function renderCard(id, file, type, defaultTarget, settings) {
     const iconMap = { video: '🎬', audio: '🎵', image: '🖼️', doc: '📝' };
     const fmtOpts = FORMATS[type].map(f => `<option value="${f}" ${f === defaultTarget ? 'selected' : ''}>${f.toUpperCase()}</option>`).join('');
 
-    // --- DYNAMIC SETTINGS GENERATOR ---
     let settingsHTML = '';
     
     if (type === 'video') {
@@ -107,55 +108,15 @@ function renderCard(id, file, type, defaultTarget, settings) {
                 <option value="original">Orig Res</option>
                 <option value="1080">1080p</option>
                 <option value="720">720p</option>
-                <option value="480">480p</option>
-            </select>
-            <select onchange="updateSet('${id}', 'fps', this.value)" class="opt-input">
-                <option value="original">Orig FPS</option>
-                <option value="60">60 fps</option>
-                <option value="30">30 fps</option>
             </select>
             <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input">
                 <option value="medium" selected>Med Q</option>
                 <option value="high">High Q</option>
                 <option value="low">Low Q</option>
             </select>
-            <select onchange="updateSet('${id}', 'audio', this.value)" class="opt-input">
-                <option value="keep">Keep Audio</option>
-                <option value="remove">Mute</option>
-            </select>
-        `;
-    } else if (type === 'audio') {
-        settingsHTML = `
-            <select onchange="updateSet('${id}', 'bitrate', this.value)" class="opt-input">
-                <option value="128k" selected>128 kbps</option>
-                <option value="320k">320 kbps</option>
-                <option value="64k">64 kbps</option>
-            </select>
-            <select onchange="updateSet('${id}', 'channels', this.value)" class="opt-input">
-                <option value="original">Orig Channels</option>
-                <option value="2">Stereo</option>
-                <option value="1">Mono</option>
-            </select>
-        `;
-    } else if (type === 'image') {
-        settingsHTML = `
-             <select onchange="updateSet('${id}', 'scale', this.value)" class="opt-input">
-                <option value="100">Orig Size</option>
-                <option value="75">75% Scale</option>
-                <option value="50">50% Scale</option>
-            </select>
         `;
     } else if (type === 'doc') {
-        // NEW: DOCX SPECIFIC OPTIONS
         settingsHTML = `
-             <select onchange="updateSet('${id}', 'pageSize', this.value)" class="opt-input">
-                <option value="a4">A4 Page</option>
-                <option value="letter">Letter Page</option>
-            </select>
-             <select onchange="updateSet('${id}', 'orientation', this.value)" class="opt-input">
-                <option value="portrait">Portrait</option>
-                <option value="landscape">Landscape</option>
-            </select>
              <select onchange="updateSet('${id}', 'margin', this.value)" class="opt-input">
                 <option value="10">Normal Margin</option>
                 <option value="0">No Margin</option>
@@ -206,12 +167,7 @@ function updateSet(id, key, val) {
 function removeFile(id) {
     files = files.filter(f => f.id !== id);
     document.getElementById(`card-${id}`).remove();
-    if(!files.length) {
-        dom.empty.style.display = 'flex';
-        dom.fileList.classList.add('hidden');
-        dom.convertBtn.disabled = true;
-        dom.convertBtn.classList.add('opacity-50');
-    }
+    checkIfAllDone();
 }
 
 // --- CORE PROCESSOR ---
@@ -228,6 +184,7 @@ async function convertAll() {
 
     dom.convertBtn.disabled = false;
     dom.convertBtn.innerHTML = "Convert All";
+    checkIfAllDone();
 }
 
 async function processFile(f) {
@@ -243,110 +200,131 @@ async function processFile(f) {
     els.stat.className = "text-xs font-bold text-iri mt-1 text-right animate-pulse";
 
     try {
-        // --- 1. DOCX PROCESSOR ---
+        let outBlob = null;
+
+        // --- 1. DOCX PROCESSOR (NEW: HIGH FIDELITY) ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
-            const result = await mammoth.convertToHtml({ arrayBuffer });
             
-            if (f.target === 'html') {
-                downloadBlob(new Blob([result.value], {type: 'text/html'}), f.file.name, 'html', els);
-            } else {
-                els.stat.innerText = "Rendering PDF...";
-                
-                const element = document.createElement('div');
-                // Basic styling to make the PDF look decent
-                element.innerHTML = `
-                    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #000;">
-                        ${result.value}
-                    </div>
-                `;
+            // A. RENDER WORD TO HIDDEN DIV (Preserves layout)
+            dom.hiddenRenderer.innerHTML = ""; // Clear
+            await docx.renderAsync(arrayBuffer, dom.hiddenRenderer, null, { 
+                inWrapper: false, 
+                ignoreWidth: false 
+            });
 
-                // Use the user-selected settings
-                const opt = {
-                    margin: parseInt(f.settings.margin),
-                    filename: f.file.name.replace('.docx', '.pdf'),
-                    image: { type: 'jpeg', quality: 0.98 },
-                    html2canvas: { scale: 2 },
-                    jsPDF: { unit: 'mm', format: f.settings.pageSize, orientation: f.settings.orientation }
-                };
+            els.stat.innerText = "Saving PDF...";
 
-                // Save PDF (auto-downloads)
-                await html2pdf().set(opt).from(element).save();
-                finishUI(els);
-            }
-            f.status = 'done';
-            return;
+            // B. CAPTURE DIV TO PDF BLOB (No Auto Download)
+            const opt = {
+                margin: parseInt(f.settings.margin),
+                filename: f.file.name.replace('.docx', '.pdf'),
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2 },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+
+            // .output('blob') returns a promise with the blob
+            outBlob = await html2pdf().set(opt).from(dom.hiddenRenderer).output('blob');
+            
+            dom.hiddenRenderer.innerHTML = ""; // Cleanup RAM
         }
-
+        
         // --- 2. FFMPEG PROCESSOR ---
-        const inName = `in_${f.id}.${f.file.name.split('.').pop()}`;
-        const outName = `out_${f.id}.${f.target}`;
-        
-        ffmpeg.FS('writeFile', inName, await fetchFile(f.file));
-        ffmpeg.setProgress(({ ratio }) => { els.bar.style.width = `${Math.max(5, ratio * 100)}%`; });
-
-        // Build Arguments based on Settings
-        let args = ['-i', inName];
-        const s = f.settings;
-
-        if (f.type === 'video') {
-            if (s.res !== 'original') args.push('-vf', `scale=-2:${s.res}`);
-            if (s.fps !== 'original') args.push('-r', s.fps);
-            if (s.audio === 'remove') args.push('-an');
+        else {
+            const inName = `in_${f.id}.${f.file.name.split('.').pop()}`;
+            const outName = `out_${f.id}.${f.target}`;
             
-            const crfMap = { high: '23', medium: '28', low: '35' };
-            args.push('-crf', crfMap[s.qual]);
-            args.push('-preset', 'ultrafast'); 
-        }
-        
-        if (f.type === 'audio') {
-            args.push('-b:a', s.bitrate);
-            if (s.channels !== 'original') args.push('-ac', s.channels);
-        }
+            ffmpeg.FS('writeFile', inName, await fetchFile(f.file));
+            ffmpeg.setProgress(({ ratio }) => { els.bar.style.width = `${Math.max(5, ratio * 100)}%`; });
 
-        if (f.type === 'image') {
-            if (s.scale !== '100') {
-                const scaleVal = parseInt(s.scale) / 100;
-                args.push('-vf', `scale=iw*${scaleVal}:ih*${scaleVal}`);
+            let args = ['-i', inName];
+            const s = f.settings;
+
+            if (f.type === 'video') {
+                if (s.res !== 'original') args.push('-vf', `scale=-2:${s.res}`);
+                if (s.qual) {
+                    const crfMap = { high: '23', medium: '28', low: '35' };
+                    args.push('-crf', crfMap[s.qual]);
+                    args.push('-preset', 'ultrafast'); 
+                }
             }
+            if (f.type === 'audio') args.push('-b:a', s.bitrate);
+            if (f.type === 'image' && s.scale !== '100') {
+                 args.push('-vf', `scale=iw*${parseInt(s.scale)/100}:ih*${parseInt(s.scale)/100}`);
+            }
+
+            args.push(outName);
+            await ffmpeg.run(...args);
+
+            const data = ffmpeg.FS('readFile', outName);
+            outBlob = new Blob([data.buffer], { type: `${f.type}/${f.target}` });
+            
+            ffmpeg.FS('unlink', inName);
+            ffmpeg.FS('unlink', outName);
         }
 
-        args.push(outName);
-
-        // Execute
-        await ffmpeg.run(...args);
-
-        // Retrieve & Download
-        const data = ffmpeg.FS('readFile', outName);
-        const blob = new Blob([data.buffer], { type: `${f.type}/${f.target}` });
-        downloadBlob(blob, f.file.name, f.target, els);
-
-        // Cleanup
-        ffmpeg.FS('unlink', inName);
-        ffmpeg.FS('unlink', outName);
+        // --- FINISH ---
+        f.resultBlob = outBlob;
         f.status = 'done';
+        
+        // Show Download Button (Individual)
+        const url = URL.createObjectURL(outBlob);
+        const ext = f.target;
+        const newName = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + ext;
+        
+        els.act.innerHTML = `
+            <a href="${url}" download="${newName}" class="mt-2 w-full bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold py-2 px-4 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2">
+                <span>⬇ Download ${ext.toUpperCase()}</span>
+            </a>
+        `;
 
     } catch (err) {
         console.error(err);
         els.stat.innerText = "Failed";
         els.stat.className = "text-xs font-bold text-red-500 mt-1 text-right";
-        showToast(`Error processing ${f.file.name}`, true);
+        showToast(`Error: ${err.message}`, true);
     }
 }
 
-// --- UTILS ---
-function downloadBlob(blob, originalName, ext, els) {
-    const url = URL.createObjectURL(blob);
-    const newName = originalName.substring(0, originalName.lastIndexOf('.')) + '.' + ext;
-    els.act.innerHTML = `
-        <a href="${url}" download="${newName}" class="mt-2 w-full bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold py-2 px-4 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2">
-            <span>Save ${ext.toUpperCase()}</span>
-        </a>
-    `;
+// --- DOWNLOAD ALL (ZIP) ---
+async function downloadAll() {
+    const doneFiles = files.filter(f => f.status === 'done' && f.resultBlob);
+    if(doneFiles.length === 0) return;
+
+    dom.downloadAllBtn.innerText = "Zipping...";
+    dom.downloadAllBtn.disabled = true;
+
+    const zip = new JSZip();
+    
+    doneFiles.forEach(f => {
+        const ext = f.target;
+        const name = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + ext;
+        zip.file(name, f.resultBlob);
+    });
+
+    try {
+        const content = await zip.generateAsync({type:"blob"});
+        const url = URL.createObjectURL(content);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = "111converter_files.zip";
+        link.click();
+    } catch(e) {
+        showToast("Zip failed", true);
+    }
+
+    dom.downloadAllBtn.innerText = "Download ZIP";
+    dom.downloadAllBtn.disabled = false;
 }
 
-function finishUI(els) {
-    els.act.innerHTML = `<div class="mt-2 w-full bg-emerald-100 text-emerald-600 text-sm font-bold py-2 px-4 rounded-lg text-center">✓ Saved</div>`;
+function checkIfAllDone() {
+    const anyDone = files.some(f => f.status === 'done');
+    if (anyDone) {
+        dom.downloadAllBtn.classList.remove('hidden');
+    } else {
+        dom.downloadAllBtn.classList.add('hidden');
+    }
 }
 
 function showToast(msg, isError = false) {

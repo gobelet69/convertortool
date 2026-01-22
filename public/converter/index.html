@@ -6,8 +6,7 @@
     <title>111iridescence | Universal Pro</title>
     
     <script src="tailwind.js"></script>
-    <script src="mammoth.js"></script>
-    <script src="html2pdf.js"></script>
+    <script src="jszip.js"></script>         <script src="docx-preview.js"></script>  <script src="html2pdf.js"></script>
     
     <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
     
@@ -37,9 +36,15 @@
                 <button onclick="document.getElementById('file-upload').click()" class="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg font-bold text-sm shadow-md transition-transform hover:scale-105">
                     + Add Files
                 </button>
-                <button id="convert-all-btn" onclick="convertAll()" class="bg-iri hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-bold text-sm shadow-md transition-all opacity-50 cursor-not-allowed" disabled>
-                    Convert All
-                </button>
+                
+                <div class="flex gap-2">
+                    <button id="convert-all-btn" onclick="convertAll()" class="bg-iri hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-bold text-sm shadow-md transition-all opacity-50 cursor-not-allowed" disabled>
+                        Convert All
+                    </button>
+                    <button id="download-all-btn" onclick="downloadAll()" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow-md transition-all hidden">
+                        Download ZIP
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -55,6 +60,8 @@
         </div>
         
         <input type="file" id="file-upload" class="hidden" multiple>
+        
+        <div id="hidden-renderer" style="position:fixed; left:-9999px; top:0; width: 800px; background:white; z-index:-1;"></div>
     </main>
     
     <script>
