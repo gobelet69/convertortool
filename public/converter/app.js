@@ -7,19 +7,19 @@ const FORMATS = {
     video: ['mp4', 'webm', 'avi', 'mov', 'mkv', 'gif', 'mp3'],
     audio: ['mp3', 'wav', 'aac', 'ogg', 'm4a'],
     image: ['jpg', 'png', 'webp', 'bmp', 'ico'],
-    doc:   ['pdf'] // HTML removed to simplify layout focus
+    doc:   ['pdf']
 };
 
-// Default States
+// Default States (Options restaurées ici)
 const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100' },
-    doc:   { margin: '10' } 
+    doc:   { pageSize: 'a4', orientation: 'portrait', margin: '10' } // RESTORED
 };
 
 // --- STATE ---
-let files = []; // Stores { id, file, resultBlob, status... }
+let files = []; 
 
 const dom = {
     dropZone: document.getElementById('drop-zone'),
@@ -116,7 +116,16 @@ function renderCard(id, file, type, defaultTarget, settings) {
             </select>
         `;
     } else if (type === 'doc') {
+        // RESTORED OPTIONS
         settingsHTML = `
+             <select onchange="updateSet('${id}', 'pageSize', this.value)" class="opt-input">
+                <option value="a4">A4</option>
+                <option value="letter">Letter</option>
+            </select>
+             <select onchange="updateSet('${id}', 'orientation', this.value)" class="opt-input">
+                <option value="portrait">Portrait</option>
+                <option value="landscape">Landscape</option>
+            </select>
              <select onchange="updateSet('${id}', 'margin', this.value)" class="opt-input">
                 <option value="10">Normal Margin</option>
                 <option value="0">No Margin</option>
@@ -202,35 +211,30 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX PROCESSOR (NEW: HIGH FIDELITY) ---
+        // --- 1. DOCX (Docx-Preview + Html2Pdf) ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
             
-            // A. RENDER WORD TO HIDDEN DIV (Preserves layout)
-            dom.hiddenRenderer.innerHTML = ""; // Clear
-            await docx.renderAsync(arrayBuffer, dom.hiddenRenderer, null, { 
-                inWrapper: false, 
-                ignoreWidth: false 
-            });
+            // Render docx to hidden div
+            dom.hiddenRenderer.innerHTML = "";
+            await docx.renderAsync(arrayBuffer, dom.hiddenRenderer, null, { inWrapper: false, ignoreWidth: false });
 
-            els.stat.innerText = "Saving PDF...";
+            els.stat.innerText = "Generating PDF...";
 
-            // B. CAPTURE DIV TO PDF BLOB (No Auto Download)
+            // Use options (Restored Size/Orientation)
             const opt = {
                 margin: parseInt(f.settings.margin),
                 filename: f.file.name.replace('.docx', '.pdf'),
                 image: { type: 'jpeg', quality: 0.98 },
                 html2canvas: { scale: 2 },
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                jsPDF: { unit: 'mm', format: f.settings.pageSize, orientation: f.settings.orientation }
             };
 
-            // .output('blob') returns a promise with the blob
             outBlob = await html2pdf().set(opt).from(dom.hiddenRenderer).output('blob');
-            
-            dom.hiddenRenderer.innerHTML = ""; // Cleanup RAM
+            dom.hiddenRenderer.innerHTML = ""; 
         }
         
-        // --- 2. FFMPEG PROCESSOR ---
+        // --- 2. FFMPEG ---
         else {
             const inName = `in_${f.id}.${f.file.name.split('.').pop()}`;
             const outName = `out_${f.id}.${f.target}`;
@@ -264,18 +268,18 @@ async function processFile(f) {
             ffmpeg.FS('unlink', outName);
         }
 
-        // --- FINISH ---
+        // --- SUCCESS ---
         f.resultBlob = outBlob;
         f.status = 'done';
         
-        // Show Download Button (Individual)
+        // GENERATE INDIVIDUAL BUTTON
         const url = URL.createObjectURL(outBlob);
         const ext = f.target;
         const newName = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + ext;
         
         els.act.innerHTML = `
             <a href="${url}" download="${newName}" class="mt-2 w-full bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold py-2 px-4 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2">
-                <span>⬇ Download ${ext.toUpperCase()}</span>
+                <span>⬇ Save ${ext.toUpperCase()}</span>
             </a>
         `;
 
@@ -287,7 +291,7 @@ async function processFile(f) {
     }
 }
 
-// --- DOWNLOAD ALL (ZIP) ---
+// --- DOWNLOAD ALL ---
 async function downloadAll() {
     const doneFiles = files.filter(f => f.status === 'done' && f.resultBlob);
     if(doneFiles.length === 0) return;
@@ -296,7 +300,6 @@ async function downloadAll() {
     dom.downloadAllBtn.disabled = true;
 
     const zip = new JSZip();
-    
     doneFiles.forEach(f => {
         const ext = f.target;
         const name = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + ext;
@@ -320,8 +323,15 @@ async function downloadAll() {
 
 function checkIfAllDone() {
     const anyDone = files.some(f => f.status === 'done');
+    const allDone = files.every(f => f.status === 'done');
+    
+    // Show button if at least one is done
     if (anyDone) {
         dom.downloadAllBtn.classList.remove('hidden');
+        if (allDone) {
+            dom.downloadAllBtn.classList.add('animate-bounce'); // Petit effet visuel
+            setTimeout(() => dom.downloadAllBtn.classList.remove('animate-bounce'), 2000);
+        }
     } else {
         dom.downloadAllBtn.classList.add('hidden');
     }
