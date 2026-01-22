@@ -2,7 +2,6 @@
 const { createFFmpeg, fetchFile } = FFmpeg;
 let ffmpeg = null;
 
-// Supported Formats
 const FORMATS = {
     video: ['mp4', 'webm', 'avi', 'mov', 'mkv', 'gif', 'mp3'],
     audio: ['mp3', 'wav', 'aac', 'ogg', 'm4a'],
@@ -10,16 +9,15 @@ const FORMATS = {
     doc:   ['pdf']
 };
 
-// Default States (Options restaurées ici)
+// Paramètres par défaut
 const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
-    image: { scale: '100' },
-    doc:   { pageSize: 'a4', orientation: 'portrait', margin: '10' } // RESTORED
+    image: { scale: '100', qual: '90', gray: 'no' }, // Ajout options image
+    doc:   { pageSize: 'a4', orientation: 'portrait', margin: '10' }
 };
 
-// --- STATE ---
-let files = []; 
+let files = [];
 
 const dom = {
     dropZone: document.getElementById('drop-zone'),
@@ -31,7 +29,7 @@ const dom = {
     hiddenRenderer: document.getElementById('hidden-renderer')
 };
 
-// --- INIT ENGINE ---
+// --- MOTEUR ---
 async function initFFmpeg() {
     try {
         ffmpeg = createFFmpeg({ log: false });
@@ -57,7 +55,7 @@ dom.dropZone.addEventListener('drop', (e) => {
 });
 document.getElementById('file-upload').addEventListener('change', (e) => handleFiles(e.target.files));
 
-// --- FILE LOGIC ---
+// --- LOGIQUE FICHIERS ---
 function getType(file) {
     if (file.name.endsWith('.docx')) return 'doc';
     if (file.type.startsWith('video/') || ['mkv','avi','mov'].some(x => file.name.endsWith(x))) return 'video';
@@ -71,9 +69,8 @@ function handleFiles(fileList) {
 
     Array.from(fileList).forEach(file => {
         const type = getType(file);
-        
         if (type === 'unknown') {
-            showToast(`Error: ${file.name} is not a supported format.`, true);
+            showToast(`Error: ${file.name} non supporté.`, true);
             return;
         }
 
@@ -84,15 +81,14 @@ function handleFiles(fileList) {
 
         const id = Math.random().toString(36).substr(2, 9);
         const defaultTarget = type === 'doc' ? 'pdf' : (type === 'video' ? 'mp4' : (type === 'audio' ? 'mp3' : 'png'));
-        
         const settings = JSON.parse(JSON.stringify(DEFAULTS[type]));
 
         files.push({ id, file, type, target: defaultTarget, settings, status: 'idle', resultBlob: null });
-        renderCard(id, file, type, defaultTarget, settings);
+        renderCard(id, file, type, defaultTarget);
     });
 }
 
-function renderCard(id, file, type, defaultTarget, settings) {
+function renderCard(id, file, type, defaultTarget) {
     const div = document.createElement('div');
     div.id = `card-${id}`;
     div.className = "bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-start gap-4 fade-in relative group";
@@ -104,33 +100,26 @@ function renderCard(id, file, type, defaultTarget, settings) {
     
     if (type === 'video') {
         settingsHTML = `
-            <select onchange="updateSet('${id}', 'res', this.value)" class="opt-input">
-                <option value="original">Orig Res</option>
-                <option value="1080">1080p</option>
-                <option value="720">720p</option>
+            <select onchange="updateSet('${id}', 'res', this.value)" class="opt-input"><option value="original">Orig Res</option><option value="1080">1080p</option><option value="720">720p</option></select>
+            <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input"><option value="medium">Med Q</option><option value="high">High Q</option><option value="low">Low Q</option></select>
+        `;
+    } else if (type === 'image') {
+        // NOUVELLES OPTIONS IMAGES
+        settingsHTML = `
+             <select onchange="updateSet('${id}', 'scale', this.value)" class="opt-input">
+                <option value="100">100% Size</option><option value="75">75% Size</option><option value="50">50% Size</option>
             </select>
             <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input">
-                <option value="medium" selected>Med Q</option>
-                <option value="high">High Q</option>
-                <option value="low">Low Q</option>
+                <option value="90">High Q</option><option value="75">Med Q</option><option value="50">Low Q</option>
+            </select>
+            <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input">
+                <option value="no">Color</option><option value="yes">B&W</option>
             </select>
         `;
     } else if (type === 'doc') {
-        // RESTORED OPTIONS
         settingsHTML = `
-             <select onchange="updateSet('${id}', 'pageSize', this.value)" class="opt-input">
-                <option value="a4">A4</option>
-                <option value="letter">Letter</option>
-            </select>
-             <select onchange="updateSet('${id}', 'orientation', this.value)" class="opt-input">
-                <option value="portrait">Portrait</option>
-                <option value="landscape">Landscape</option>
-            </select>
-             <select onchange="updateSet('${id}', 'margin', this.value)" class="opt-input">
-                <option value="10">Normal Margin</option>
-                <option value="0">No Margin</option>
-                <option value="20">Wide Margin</option>
-            </select>
+             <select onchange="updateSet('${id}', 'pageSize', this.value)" class="opt-input"><option value="a4">A4</option><option value="letter">Letter</option></select>
+             <select onchange="updateSet('${id}', 'orientation', this.value)" class="opt-input"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select>
         `;
     }
 
@@ -143,17 +132,13 @@ function renderCard(id, file, type, defaultTarget, settings) {
             </div>
             <button onclick="removeFile('${id}')" class="text-slate-300 hover:text-red-500 p-2 text-xl">&times;</button>
         </div>
-
         <div class="w-full bg-slate-50 p-3 rounded-lg border border-slate-100 grid grid-cols-2 md:grid-cols-4 gap-2">
             <div class="flex flex-col col-span-1">
                 <label class="text-[10px] text-slate-400 font-bold uppercase mb-1">Target</label>
-                <select onchange="updateTarget('${id}', this.value)" class="opt-input font-bold text-iri">
-                    ${fmtOpts}
-                </select>
+                <select onchange="updateTarget('${id}', this.value)" class="opt-input font-bold text-iri">${fmtOpts}</select>
             </div>
             ${settingsHTML}
         </div>
-
         <div id="action-${id}" class="w-full">
             <div class="w-full bg-slate-200 rounded-full h-1.5 hidden mt-2" id="prog-bg-${id}">
                 <div class="bg-iri h-1.5 rounded-full transition-all duration-300" style="width: 0%" id="prog-bar-${id}"></div>
@@ -164,24 +149,17 @@ function renderCard(id, file, type, defaultTarget, settings) {
     dom.fileList.appendChild(div);
 }
 
-// --- STATE UPDATES ---
-function updateTarget(id, val) {
-    const f = files.find(x => x.id === id);
-    if(f) f.target = val;
-}
-function updateSet(id, key, val) {
-    const f = files.find(x => x.id === id);
-    if(f) f.settings[key] = val;
-}
+function updateTarget(id, val) { files.find(x => x.id === id).target = val; }
+function updateSet(id, key, val) { files.find(x => x.id === id).settings[key] = val; }
 function removeFile(id) {
     files = files.filter(f => f.id !== id);
     document.getElementById(`card-${id}`).remove();
     checkIfAllDone();
 }
 
-// --- CORE PROCESSOR ---
+// --- CONVERSION ---
 async function convertAll() {
-    if(!ffmpeg && files.some(f => f.type !== 'doc')) return alert("Video engine still loading...");
+    if(!ffmpeg && files.some(f => f.type !== 'doc')) return alert("Engine loading...");
     
     dom.convertBtn.disabled = true;
     dom.convertBtn.innerHTML = `<span class="spin inline-block mr-2">↻</span> Processing...`;
@@ -211,30 +189,32 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX (Docx-Preview + Html2Pdf) ---
+        // --- 1. DOCX (Fix: utilise conteneur caché) ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
             
-            // Render docx to hidden div
+            // On vide le conteneur caché
             dom.hiddenRenderer.innerHTML = "";
+            
+            // On dessine le Word dedans (fidélité visuelle)
             await docx.renderAsync(arrayBuffer, dom.hiddenRenderer, null, { inWrapper: false, ignoreWidth: false });
 
-            els.stat.innerText = "Generating PDF...";
-
-            // Use options (Restored Size/Orientation)
+            els.stat.innerText = "Rendering PDF...";
+            
             const opt = {
                 margin: parseInt(f.settings.margin),
                 filename: f.file.name.replace('.docx', '.pdf'),
                 image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: { scale: 2 },
+                html2canvas: { scale: 2, useCORS: true },
                 jsPDF: { unit: 'mm', format: f.settings.pageSize, orientation: f.settings.orientation }
             };
 
+            // On capture le conteneur, pas un élément détaché !
             outBlob = await html2pdf().set(opt).from(dom.hiddenRenderer).output('blob');
             dom.hiddenRenderer.innerHTML = ""; 
         }
         
-        // --- 2. FFMPEG ---
+        // --- 2. FFMPEG (Video/Audio/Image) ---
         else {
             const inName = `in_${f.id}.${f.file.name.split('.').pop()}`;
             const outName = `out_${f.id}.${f.target}`;
@@ -245,17 +225,26 @@ async function processFile(f) {
             let args = ['-i', inName];
             const s = f.settings;
 
+            // VIDEO OPTIONS
             if (f.type === 'video') {
                 if (s.res !== 'original') args.push('-vf', `scale=-2:${s.res}`);
                 if (s.qual) {
-                    const crfMap = { high: '23', medium: '28', low: '35' };
-                    args.push('-crf', crfMap[s.qual]);
-                    args.push('-preset', 'ultrafast'); 
+                    const crf = { high: '23', medium: '28', low: '35' };
+                    args.push('-crf', crf[s.qual], '-preset', 'ultrafast'); 
                 }
             }
-            if (f.type === 'audio') args.push('-b:a', s.bitrate);
-            if (f.type === 'image' && s.scale !== '100') {
-                 args.push('-vf', `scale=iw*${parseInt(s.scale)/100}:ih*${parseInt(s.scale)/100}`);
+            // IMAGE OPTIONS (New)
+            if (f.type === 'image') {
+                let filters = [];
+                if (s.scale !== '100') filters.push(`scale=iw*${s.scale/100}:ih*${s.scale/100}`);
+                if (s.gray === 'yes') filters.push('hue=s=0');
+                
+                if(filters.length > 0) args.push('-vf', filters.join(','));
+                
+                // Qualité (pour jpg)
+                if(f.target === 'jpg' || f.target === 'jpeg') {
+                    args.push('-q:v', Math.round((100 - s.qual) / 3)); // approx mapping
+                }
             }
 
             args.push(outName);
@@ -268,30 +257,27 @@ async function processFile(f) {
             ffmpeg.FS('unlink', outName);
         }
 
-        // --- SUCCESS ---
         f.resultBlob = outBlob;
         f.status = 'done';
         
-        // GENERATE INDIVIDUAL BUTTON
         const url = URL.createObjectURL(outBlob);
-        const ext = f.target;
-        const newName = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + ext;
+        const newName = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + f.target;
         
         els.act.innerHTML = `
             <a href="${url}" download="${newName}" class="mt-2 w-full bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold py-2 px-4 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2">
-                <span>⬇ Save ${ext.toUpperCase()}</span>
+                <span>⬇ Save</span>
             </a>
         `;
 
     } catch (err) {
         console.error(err);
-        els.stat.innerText = "Failed";
+        els.stat.innerText = "Error";
         els.stat.className = "text-xs font-bold text-red-500 mt-1 text-right";
-        showToast(`Error: ${err.message}`, true);
+        showToast("Erreur conversion", true);
     }
 }
 
-// --- DOWNLOAD ALL ---
+// --- DOWNLOAD ZIP ---
 async function downloadAll() {
     const doneFiles = files.filter(f => f.status === 'done' && f.resultBlob);
     if(doneFiles.length === 0) return;
@@ -301,8 +287,7 @@ async function downloadAll() {
 
     const zip = new JSZip();
     doneFiles.forEach(f => {
-        const ext = f.target;
-        const name = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + ext;
+        const name = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + f.target;
         zip.file(name, f.resultBlob);
     });
 
@@ -311,27 +296,19 @@ async function downloadAll() {
         const url = URL.createObjectURL(content);
         const link = document.createElement('a');
         link.href = url;
-        link.download = "111converter_files.zip";
+        link.download = "converted_files.zip";
         link.click();
     } catch(e) {
-        showToast("Zip failed", true);
+        showToast("Erreur ZIP", true);
     }
 
-    dom.downloadAllBtn.innerText = "Download ZIP";
+    dom.downloadAllBtn.innerText = "📦 Download ZIP";
     dom.downloadAllBtn.disabled = false;
 }
 
 function checkIfAllDone() {
-    const anyDone = files.some(f => f.status === 'done');
-    const allDone = files.every(f => f.status === 'done');
-    
-    // Show button if at least one is done
-    if (anyDone) {
+    if (files.some(f => f.status === 'done')) {
         dom.downloadAllBtn.classList.remove('hidden');
-        if (allDone) {
-            dom.downloadAllBtn.classList.add('animate-bounce'); // Petit effet visuel
-            setTimeout(() => dom.downloadAllBtn.classList.remove('animate-bounce'), 2000);
-        }
     } else {
         dom.downloadAllBtn.classList.add('hidden');
     }
@@ -343,8 +320,5 @@ function showToast(msg, isError = false) {
     t.innerText = msg;
     document.body.appendChild(t);
     requestAnimationFrame(() => t.classList.remove('translate-y-20', 'opacity-0'));
-    setTimeout(() => {
-        t.classList.add('translate-y-20', 'opacity-0');
-        setTimeout(() => t.remove(), 300);
-    }, 4000);
+    setTimeout(() => { t.classList.add('translate-y-20', 'opacity-0'); setTimeout(() => t.remove(), 300); }, 4000);
 }

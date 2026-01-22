@@ -6,11 +6,13 @@
     <title>111iridescence | Universal Pro</title>
     
     <script src="tailwind.js"></script>
-    <script src="jszip.js"></script>         <script src="docx-preview.js"></script>  <script src="html2pdf.js"></script>
+    <script src="jszip.js"></script>
+    <script src="docx-preview.js"></script>
+    <script src="html2pdf.js"></script>
     
     <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
     
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="style.css">
     <script src="app.js" defer></script>
 </head>
 <body class="h-screen flex flex-col overflow-hidden text-slate-800 font-sans bg-slate-50">
@@ -41,8 +43,8 @@
                     <button id="convert-all-btn" onclick="convertAll()" class="bg-iri hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-bold text-sm shadow-md transition-all opacity-50 cursor-not-allowed" disabled>
                         Convert All
                     </button>
-                    <button id="download-all-btn" onclick="downloadAll()" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow-md transition-all hidden">
-                        Download ZIP
+                    <button id="download-all-btn" onclick="downloadAll()" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow-md transition-all hidden flex items-center gap-2">
+                        <span>📦 Download ZIP</span>
                     </button>
                 </div>
             </div>
