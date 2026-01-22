@@ -12,7 +12,7 @@ const FORMATS = {
 const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
-    image: { scale: '100', qual: '90', gray: 'no' }, // Options images
+    image: { scale: '100', qual: '90', gray: 'no' },
     doc:   { margin: '10' }
 };
 
@@ -65,13 +65,9 @@ function getType(file) {
 
 function handleFiles(fileList) {
     if (!fileList.length) return;
-
     Array.from(fileList).forEach(file => {
         const type = getType(file);
-        if (type === 'unknown') {
-            showToast(`Format non supporté: ${file.name}`, true);
-            return;
-        }
+        if (type === 'unknown') return showToast(`Format non supporté: ${file.name}`, true);
 
         dom.empty.style.display = 'none';
         dom.fileList.classList.remove('hidden');
@@ -104,21 +100,13 @@ function renderCard(id, file, type, defaultTarget) {
         `;
     } else if (type === 'image') {
         settingsHTML = `
-             <select onchange="updateSet('${id}', 'scale', this.value)" class="opt-input">
-                <option value="100">100% Size</option><option value="75">75% Size</option><option value="50">50% Size</option>
-            </select>
-            <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input">
-                <option value="90">High Q</option><option value="75">Med Q</option><option value="50">Low Q</option>
-            </select>
-            <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input">
-                <option value="no">Color</option><option value="yes">B&W</option>
-            </select>
+             <select onchange="updateSet('${id}', 'scale', this.value)" class="opt-input"><option value="100">100% Size</option><option value="75">75% Size</option><option value="50">50% Size</option></select>
+            <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input"><option value="90">High Q</option><option value="75">Med Q</option><option value="50">Low Q</option></select>
+            <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
         settingsHTML = `
-             <select onchange="updateSet('${id}', 'margin', this.value)" class="opt-input">
-                <option value="10">Marge Normale</option><option value="0">Sans Marge</option><option value="20">Marge Large</option>
-            </select>
+             <select onchange="updateSet('${id}', 'margin', this.value)" class="opt-input"><option value="10">Marge Normale</option><option value="0">Sans Marge</option><option value="20">Marge Large</option></select>
         `;
     }
 
@@ -156,10 +144,8 @@ function removeFile(id) {
     checkIfAllDone();
 }
 
-// --- MOTEUR DE CONVERSION ---
 async function convertAll() {
     if(!ffmpeg && files.some(f => f.type !== 'doc')) return alert("Engine loading...");
-    
     dom.convertBtn.disabled = true;
     dom.convertBtn.innerHTML = `<span class="spin inline-block mr-2">↻</span> Processing...`;
 
@@ -167,12 +153,12 @@ async function convertAll() {
         if (f.status === 'done') continue;
         await processFile(f);
     }
-
     dom.convertBtn.disabled = false;
     dom.convertBtn.innerHTML = "Convert All";
     checkIfAllDone();
 }
 
+// --- COEUR DE TRAITEMENT ---
 async function processFile(f) {
     const els = {
         bg: document.getElementById(`prog-bg-${f.id}`),
@@ -188,42 +174,55 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX VERS PDF ---
+        // 1. DOCX -> IMAGE CAPTURE -> PDF
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
-            
-            // On vide et prépare le conteneur
             dom.hiddenRenderer.innerHTML = "";
             
-            // Rendu du DOCX en HTML (docx-preview)
-            // Note: ignoreWidth: false force l'utilisation de la largeur réelle
+            // Rendu Word
             await docx.renderAsync(arrayBuffer, dom.hiddenRenderer, null, { 
-                inWrapper: false, 
-                ignoreWidth: false,
-                renderHeaders: true,
-                renderFooters: true
+                inWrapper: false, ignoreWidth: false, renderHeaders: true, renderFooters: true
+            });
+            
+            // Délai pour les images
+            await new Promise(r => setTimeout(r, 800));
+            els.stat.innerText = "Rendering PDF...";
+
+            // Configuration jsPDF
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pageWidth = 210;
+            const pageHeight = 297;
+            const margin = parseInt(f.settings.margin) || 10;
+
+            // Capture via html2canvas
+            const canvas = await html2canvas(dom.hiddenRenderer, {
+                scale: 2, // Haute qualité
+                useCORS: true,
+                backgroundColor: "#ffffff"
             });
 
-            // CRITIQUE : Petit délai pour laisser le navigateur dessiner les images
-            await new Promise(r => setTimeout(r, 1000));
-
-            els.stat.innerText = "Saving PDF...";
+            const imgData = canvas.toDataURL('image/jpeg', 0.98);
             
-            const opt = {
-                margin: parseInt(f.settings.margin),
-                filename: f.file.name.replace('.docx', '.pdf'),
-                image: { type: 'jpeg', quality: 0.98 },
-                // scale: 2 améliore la netteté
-                html2canvas: { scale: 2, useCORS: true, letterRendering: true },
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-            };
-
-            // Conversion HTML -> PDF
-            outBlob = await html2pdf().set(opt).from(dom.hiddenRenderer).output('blob');
-            dom.hiddenRenderer.innerHTML = ""; // Nettoyage
+            // Calcul du ratio pour faire tenir dans A4
+            const imgWidth = pageWidth - (margin * 2); 
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+            
+            // Ajout de l'image au PDF (avec gestion multi-pages simple si besoin, ici page 1)
+            // Pour un vrai multi-page, il faudrait boucler sur la hauteur, mais commençons simple.
+            // docx-preview rend tout dans un seul long div.
+            
+            let heightLeft = imgHeight;
+            let position = margin;
+            
+            // Première page
+            pdf.addImage(imgData, 'JPEG', margin, margin, imgWidth, imgHeight);
+            
+            outBlob = pdf.output('blob');
+            dom.hiddenRenderer.innerHTML = "";
         }
         
-        // --- 2. MULTIMEDIA (FFMPEG) ---
+        // 2. FFMPEG
         else {
             const inName = `in_${f.id}.${f.file.name.split('.').pop()}`;
             const outName = `out_${f.id}.${f.target}`;
@@ -241,25 +240,20 @@ async function processFile(f) {
                     args.push('-crf', crf[s.qual], '-preset', 'ultrafast'); 
                 }
             }
-
             if (f.type === 'image') {
                 let filters = [];
                 if (s.scale !== '100') filters.push(`scale=iw*${s.scale/100}:-1`);
                 if (s.gray === 'yes') filters.push('hue=s=0');
                 if(filters.length > 0) args.push('-vf', filters.join(','));
-                
                 if(f.target === 'jpg' || f.target === 'jpeg') {
                     let q = s.qual === '90' ? 2 : (s.qual === '75' ? 10 : 20);
                     args.push('-q:v', q);
                 }
             }
-
             args.push(outName);
             await ffmpeg.run(...args);
-
             const data = ffmpeg.FS('readFile', outName);
             outBlob = new Blob([data.buffer], { type: `${f.type}/${f.target}` });
-            
             ffmpeg.FS('unlink', inName);
             ffmpeg.FS('unlink', outName);
         }
@@ -269,7 +263,6 @@ async function processFile(f) {
         
         const url = URL.createObjectURL(outBlob);
         const newName = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + f.target;
-        
         els.act.innerHTML = `
             <a href="${url}" download="${newName}" class="mt-2 w-full bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold py-2 px-4 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2">
                 <span>⬇ Save</span>
@@ -280,24 +273,20 @@ async function processFile(f) {
         console.error(err);
         els.stat.innerText = "Error";
         els.stat.className = "text-xs font-bold text-red-500 mt-1 text-right";
-        showToast("Erreur conversion: " + err.message, true);
+        showToast("Erreur conversion", true);
     }
 }
 
-// --- ZIP DOWNLOAD ---
 async function downloadAll() {
     const doneFiles = files.filter(f => f.status === 'done' && f.resultBlob);
     if(doneFiles.length === 0) return;
-
     dom.downloadAllBtn.innerText = "Zipping...";
     dom.downloadAllBtn.disabled = true;
-
     const zip = new JSZip();
     doneFiles.forEach(f => {
         const name = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + f.target;
         zip.file(name, f.resultBlob);
     });
-
     try {
         const content = await zip.generateAsync({type:"blob"});
         const url = URL.createObjectURL(content);
@@ -305,20 +294,14 @@ async function downloadAll() {
         link.href = url;
         link.download = "converted_files.zip";
         link.click();
-    } catch(e) {
-        showToast("Erreur ZIP", true);
-    }
-
+    } catch(e) { showToast("Erreur ZIP", true); }
     dom.downloadAllBtn.innerText = "📦 Download ZIP";
     dom.downloadAllBtn.disabled = false;
 }
 
 function checkIfAllDone() {
-    if (files.some(f => f.status === 'done')) {
-        dom.downloadAllBtn.classList.remove('hidden');
-    } else {
-        dom.downloadAllBtn.classList.add('hidden');
-    }
+    if (files.some(f => f.status === 'done')) dom.downloadAllBtn.classList.remove('hidden');
+    else dom.downloadAllBtn.classList.add('hidden');
 }
 
 function showToast(msg, isError = false) {
