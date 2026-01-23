@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { margin: '0' } // Word a déjà ses propres marges
+    doc:   { ocr: 'yes' } // Option OCR activée par défaut
 };
 
 let files = [];
@@ -105,7 +105,12 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Auto-Pagination Enabled</div>`;
+        settingsHTML = `
+            <select onchange="updateSet('${id}', 'ocr', this.value)" class="opt-input">
+                <option value="yes">With OCR (Searchable text)</option>
+                <option value="no">Fast Mode (Images only)</option>
+            </select>
+        `;
     }
 
     div.innerHTML = `
@@ -167,47 +172,86 @@ async function processFile(f) {
 
     els.bg.classList.remove('hidden');
     els.stat.innerText = "Processing...";
-    els.stat.className = "text-xs font-bold text-iri mt-1 text-right animate-pulse";
+    els.stat.className = "text-xs font-bold text-iri mt-1 text-right";
 
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> PAGINATION INTELLIGENTE -> PDF ---
+        // --- 1. DOCX -> HAUTE RÉSOLUTION + PAGE PAR PAGE + OCR ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
-            const contentDiv = document.getElementById('doc-content');
             
-            // 1. Rendre le docx visible pour le navigateur
+            // 1. Afficher
             dom.docRenderer.classList.remove('hidden');
-            contentDiv.innerHTML = "";
-            contentDiv.style.width = "210mm"; // Largeur stricte A4
+            dom.docContent.innerHTML = "";
+            dom.docContent.style.width = "210mm"; // Largeur A4
             
-            // 2. Rendu (inWrapper: false pour avoir les balises <section> propres)
-            await docx.renderAsync(arrayBuffer, contentDiv, null, { 
+            // 2. Rendu DOCX
+            await docx.renderAsync(arrayBuffer, dom.docContent, null, { 
                 inWrapper: false, 
                 ignoreWidth: false 
             });
 
-            els.stat.innerText = "Paginating (46 pages)...";
-            await new Promise(r => setTimeout(r, 1000)); // Laisser le temps aux images de charger
+            // 3. Récupérer toutes les pages générées par le DOCX
+            const pages = Array.from(dom.docContent.querySelectorAll('.docx'));
+            const totalPages = pages.length;
 
-            // 3. LA SOLUTION MAGIQUE : HTML2PDF + PAGEBREAK
-            const opt = {
-                margin: 0, // Les marges sont déjà dans le design du Word
-                filename: f.file.name.replace('.docx', '.pdf'),
-                image: { type: 'jpeg', quality: 0.95 },
-                html2canvas: { scale: 1.5, useCORS: true }, // Scale 1.5 pour ne pas saturer la RAM
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-                // Indique à html2pdf de couper le PDF avant chaque nouvelle page Word (.docx)
-                pagebreak: { mode: 'css', before: '.docx' } 
-            };
+            els.stat.innerText = `Preparing ${totalPages} pages...`;
+            await new Promise(r => setTimeout(r, 1500)); // Laisser le temps aux images de charger
 
-            // Conversion (Cela génèrera bien 46 pages distinctes et légères)
-            outBlob = await html2pdf().set(opt).from(contentDiv).output('blob');
-            
-            // Nettoyage
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pageWidth = 210;
+            const pageHeight = 297;
+
+            // INIT OCR
+            let worker = null;
+            if (f.settings.ocr === 'yes') {
+                els.stat.innerText = "Loading OCR AI...";
+                worker = await Tesseract.createWorker('fra+eng'); // Support Français et Anglais
+            }
+
+            // 4. BOUCLE MAGIQUE : 1 Page = 1 Capture
+            for (let i = 0; i < totalPages; i++) {
+                els.stat.innerText = `Processing Page ${i + 1} of ${totalPages}...`;
+                els.bar.style.width = `${((i + 1) / totalPages) * 100}%`;
+
+                if (i > 0) pdf.addPage();
+
+                const pageEl = pages[i];
+                // Masquer les autres pages pour éviter les débordements de pixels
+                pages.forEach(p => p.style.display = 'none');
+                pageEl.style.display = 'block';
+
+                // CAPTURE HAUTE RÉSOLUTION (scale: 3.0 = 3x la qualité standard)
+                const canvas = await html2canvas(pageEl, {
+                    scale: 3.0, 
+                    useCORS: true,
+                    backgroundColor: "#ffffff",
+                    windowWidth: pageEl.scrollWidth,
+                    windowHeight: pageEl.scrollHeight
+                });
+
+                const imgData = canvas.toDataURL('image/jpeg', 0.95);
+                pdf.addImage(imgData, 'JPEG', 0, 0, pageWidth, pageHeight);
+
+                // PROCESSUS OCR : Extraction du texte et superposition invisible
+                if (worker) {
+                    const { data: { text } } = await worker.recognize(canvas);
+                    if (text && text.trim().length > 0) {
+                        pdf.setFontSize(8);
+                        pdf.setTextColor(255, 255, 255); // Texte blanc/invisible
+                        // On place le texte récupéré (basique, rend le PDF "recherchable" via CTRL+F)
+                        pdf.text(text, 10, 10, { maxWidth: pageWidth - 20 });
+                    }
+                }
+            }
+
+            // Fin et Nettoyage
+            if (worker) await worker.terminate();
+            outBlob = pdf.output('blob');
             dom.docRenderer.classList.add('hidden');
-            contentDiv.innerHTML = ""; 
+            dom.docContent.innerHTML = ""; 
         }
         
         // --- 2. FFMPEG (Video/Image/Audio) ---
