@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { } // Mode Auto-Pagination & Compression
+    doc:   { } // Mode "Page-by-Page HD + Compression"
 };
 
 let files = [];
@@ -103,7 +103,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Auto-Pagination & Compression (DEBUG ON)</div>`;
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Page-by-Page HD (Optimisé)</div>`;
     }
 
     div.innerHTML = `
@@ -145,7 +145,7 @@ async function convertAll() {
     dom.convertBtn.disabled = true;
     dom.convertBtn.innerHTML = `<span class="spin inline-block mr-2">↻</span> Processing...`;
 
-    console.log("▶ [DEBUT] Lancement de la conversion globale");
+    console.log("▶ [DEBUT] Lancement de la conversion");
 
     for (const f of files) {
         if (f.status === 'done') continue;
@@ -172,53 +172,85 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> COMPRESSION + PAGINATION AUTO + BASE64 IMAGES ---
+        // --- 1. DOCX -> BOUCLE PAGE PAR PAGE + HD + COMPRESSION ---
         if (f.type === 'doc') {
             console.log(`\n--- TRAITEMENT DOCX : ${f.file.name} ---`);
-            
-            console.log("1. Lecture du fichier en mémoire...");
-            els.stat.innerText = "1/4 Lecture mémoire...";
+            els.stat.innerText = "1/4 Lecture DOCX...";
             const arrayBuffer = await f.file.arrayBuffer();
             
-            // On vide la zone cachée
+            // On s'assure que le conteneur est visible pour que la capture ne soit pas blanche
+            // (Il reste caché sous l'UI grâce au z-index:-10 du HTML)
+            dom.docRenderer.classList.remove('hidden');
             dom.docRenderer.innerHTML = "";
             dom.docRenderer.style.width = "210mm";
             
-            console.log("2. Rendu DOCX (docx-preview)...");
+            console.log("2. Rendu DOCX en HTML...");
             els.stat.innerText = "2/4 Rendu HTML...";
             
-            // Rendu Word pur avec base64 pour ne pas faire planter les images
+            // useBase64URL: true charge les images directement dans le code pour éviter les blocages de sécurité
             await docx.renderAsync(arrayBuffer, dom.docRenderer, null, { 
                 inWrapper: false, 
                 ignoreWidth: false,
                 useBase64URL: true 
             });
 
-            console.log("✅ Rendu terminé. Mise en pause de 1s pour laisser le navigateur charger les images...");
-            els.stat.innerText = `3/4 Traitement images...`;
+            // docx-preview a transformé le DOCX en une liste de <section class="docx">
+            const pagesWord = Array.from(dom.docRenderer.querySelectorAll('.docx'));
+            const totalPages = pagesWord.length;
+
+            console.log(`✅ ${totalPages} pages détectées. Pause de chargement...`);
+            els.stat.innerText = `3/4 Traitement de ${totalPages} pages...`;
             await new Promise(r => setTimeout(r, 1000)); 
 
-            console.log("3. Configuration de html2pdf (Compression + Pagination)...");
-            // OPTIONS DE COMPRESSION + PAGINATION 1-pour-1
-            const opt = {
-                margin: 0, 
-                filename: f.file.name.replace('.docx', '.pdf'),
-                image: { type: 'jpeg', quality: 0.75 }, 
-                html2canvas: { scale: 1.5, useCORS: true }, 
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
-                pagebreak: { mode: 'css', before: '.docx' } 
-            };
+            // Initialisation de jsPDF avec compression active
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF({
+                orientation: 'p',
+                unit: 'mm',
+                format: 'a4',
+                compress: true // Force la compression GZIP native du PDF
+            });
+            const pdfW = 210;
+            const pdfH = 297;
 
-            console.log("4. Lancement de la capture PDF...");
-            els.stat.innerText = `4/4 Génération PDF...`;
+            // --- TA BOUCLE LOGIQUE EST ICI ---
+            console.log("3. Début de la capture page par page...");
+            for (let i = 0; i < totalPages; i++) {
+                els.stat.innerText = `Capture Page ${i + 1}/${totalPages}...`;
+                els.bar.style.width = `${((i + 1) / totalPages) * 100}%`;
+                console.log(`📸 Capture de la page ${i + 1}...`);
+
+                if (i > 0) pdf.addPage();
+
+                // On isole la page actuelle (on cache les autres) pour éviter les bugs de scroll/rendu
+                pagesWord.forEach((p, idx) => p.style.display = (idx === i) ? 'block' : 'none');
+
+                // CAPTURE HAUTE DEFINITION (scale 2.0 = 2x plus net qu'un écran normal)
+                const canvas = await html2canvas(pagesWord[i], {
+                    scale: 2.0, 
+                    useCORS: true,
+                    backgroundColor: "#ffffff",
+                    windowWidth: pagesWord[i].scrollWidth,
+                    windowHeight: pagesWord[i].scrollHeight
+                });
+
+                // COMPRESSION : On convertit en JPEG avec qualité 75% (très net, très léger)
+                const imgData = canvas.toDataURL('image/jpeg', 0.75);
+                
+                // ASSEMBLAGE : On colle l'image exactement à la taille A4
+                pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH);
+            }
+
+            console.log("4. Compilation du fichier PDF...");
+            els.stat.innerText = `4/4 Finalisation...`;
+            outBlob = pdf.output('blob');
             
-            outBlob = await html2pdf().set(opt).from(dom.docRenderer).output('blob');
-            
-            console.log(`✅ PDF Généré avec succès ! Poids compressé : ${(outBlob.size / 1024 / 1024).toFixed(2)} MB`);
+            console.log(`✅ PDF Terminé ! Poids final : ${(outBlob.size / 1024 / 1024).toFixed(2)} MB`);
+            dom.docRenderer.classList.add('hidden');
             dom.docRenderer.innerHTML = ""; 
         }
         
-        // --- 2. FFMPEG (Video/Image/Audio) ---
+        // --- 2. FFMPEG (Video/Image/Audio) - INCHANGE ---
         else {
             const inName = `in_${f.id}.${f.file.name.split('.').pop()}`;
             const outName = `out_${f.id}.${f.target}`;
@@ -267,8 +299,8 @@ async function processFile(f) {
         `;
 
     } catch (err) {
-        // --- ZONE DE CRASH / DEBUG ---
-        console.error("❌ ERREUR CRITIQUE PENDANT LA CONVERSION :", err);
+        // --- GESTION ERREURS / DEBUG ---
+        console.error("❌ ERREUR CRITIQUE :", err);
         els.stat.innerText = "Error (Voir Console)";
         els.stat.className = "text-xs font-bold text-red-500 mt-1 text-right";
         showToast("Erreur conversion : Regarde la console (F12)", true);
