@@ -1,6 +1,5 @@
 // --- CONFIGURATION ---
 const { createFFmpeg, fetchFile } = FFmpeg;
-const { PDFDocument, rgb, StandardFonts } = PDFLib; // Import de PDF-Lib
 let ffmpeg = null;
 
 const FORMATS = {
@@ -14,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { } 
+    doc:   { } // Plus besoin de config, LibreOffice gère tout nativement
 };
 
 let files = [];
@@ -103,7 +102,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Native PDF-Lib Generation</div>`;
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: LibreOffice WASM (Fidélité Microsoft Word)</div>`;
     }
 
     div.innerHTML = `
@@ -156,27 +155,6 @@ async function convertAll() {
     checkIfAllDone();
 }
 
-// --- FONCTION UTILITAIRE : WRAPPER DE TEXTE POUR PDF ---
-// Permet de couper le texte pour qu'il ne dépasse pas la page
-function wrapText(text, maxWidth, font, fontSize) {
-    const words = text.split(' ');
-    let lines = [];
-    let currentLine = words[0];
-
-    for (let i = 1; i < words.length; i++) {
-        const word = words[i];
-        const width = font.widthOfTextAtSize(currentLine + " " + word, fontSize);
-        if (width < maxWidth) {
-            currentLine += " " + word;
-        } else {
-            lines.push(currentLine);
-            currentLine = word;
-        }
-    }
-    lines.push(currentLine);
-    return lines;
-}
-
 // --- COEUR DE TRAITEMENT ---
 async function processFile(f) {
     const els = {
@@ -193,70 +171,32 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> MAMMOTH + PDF-LIB NATIVE ---
+        // --- 1. DOCX -> LIBREOFFICE WASM (HAUTE FIDÉLITÉ) ---
         if (f.type === 'doc') {
-            els.stat.innerText = "1/3 Extraction texte (Mammoth)...";
-            els.bar.style.width = "30%";
+            console.log(`\n--- TRAITEMENT DOCX (LibreOffice) : ${f.file.name} ---`);
             
+            els.stat.innerText = "1/2 Chargement LibreOffice (Long la 1ère fois)...";
+            els.bar.style.width = "40%";
+            
+            // 💡 IMPORT DU MODULE LOCAL WASM
+            const LOConverter = await import('libreoffice-converter');
+
+            els.stat.innerText = "2/2 Conversion de haute fidélité en cours...";
+            els.bar.style.width = "80%";
+
+            // 💡 LECTURE DU FICHIER EN BUFFER
             const arrayBuffer = await f.file.arrayBuffer();
+
+            // 💡 CONVERSION NATIVE (Appel de la fonction du package)
+            // Le package prend le buffer en entrée et retourne un buffer PDF
+            const pdfBuffer = await LOConverter.convertToPdf(arrayBuffer);
             
-            // ÉTAPE A : Extraction du texte pur avec Mammoth
-            const mammothResult = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
-            const extractedText = mammothResult.value;
+            // Création du Blob final
+            outBlob = new Blob([pdfBuffer], { type: 'application/pdf' });
 
-            els.stat.innerText = "2/3 Génération PDF Natif...";
-            els.bar.style.width = "70%";
-
-            // ÉTAPE B : Création du PDF natif avec PDF-Lib
-            const pdfDoc = await PDFDocument.create();
-            const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-            const fontSize = 11;
-            const lineHeight = 14;
-            const margin = 50;
-            const maxWidth = 595.28 - (margin * 2); // Largeur A4 en points - marges
-            
-            // Séparer les paragraphes
-            const paragraphs = extractedText.split('\n');
-            
-            let page = pdfDoc.addPage();
-            const { height } = page.getSize();
-            let yPosition = height - margin;
-
-            // Dessiner chaque ligne intelligemment (Pagination auto)
-            for (const paragraph of paragraphs) {
-                if (paragraph.trim() === '') {
-                    yPosition -= lineHeight; // Saut de ligne
-                    continue;
-                }
-
-                const lines = wrapText(paragraph, maxWidth, font, fontSize);
-
-                for (const line of lines) {
-                    if (yPosition < margin) {
-                        page = pdfDoc.addPage();
-                        yPosition = height - margin;
-                    }
-
-                    page.drawText(line, {
-                        x: margin,
-                        y: yPosition,
-                        size: fontSize,
-                        font: font,
-                        color: rgb(0, 0, 0),
-                    });
-                    yPosition -= lineHeight;
-                }
-                yPosition -= lineHeight / 2; // Espace après paragraphe
-            }
-
-            els.stat.innerText = "3/3 Enregistrement...";
+            els.stat.innerText = "Finalisation...";
             els.bar.style.width = "100%";
-
-            // ÉTAPE C : Sauvegarde en octets
-            const pdfBytes = await pdfDoc.save();
-            outBlob = new Blob([pdfBytes], { type: 'application/pdf' });
-            
-            console.log(`✅ PDF Natif Généré ! Poids : ${(outBlob.size / 1024).toFixed(2)} KB (Ultra-léger)`);
+            console.log(`✅ PDF Haute Fidélité Généré ! Poids : ${(outBlob.size / 1024 / 1024).toFixed(2)} MB`);
         }
         
         // --- 2. FFMPEG (Video/Image/Audio) ---
@@ -311,7 +251,7 @@ async function processFile(f) {
         console.error("❌ ERREUR CRITIQUE PENDANT LA CONVERSION :", err);
         els.stat.innerText = "Error (Voir Console)";
         els.stat.className = "text-xs font-bold text-red-500 mt-1 text-right";
-        showToast("Erreur conversion : Regarde la console", true);
+        showToast("Erreur conversion : Regarde la console (F12)", true);
     }
 }
 
