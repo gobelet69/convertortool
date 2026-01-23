@@ -180,9 +180,13 @@ async function processFile(f) {
             els.stat.innerText = "1/4 Lecture mémoire...";
             const arrayBuffer = await f.file.arrayBuffer();
             
-            // On vide la zone cachée
+            // --- FIX DE LA PAGE BLANCHE : RAMENER LE RENDERER SOUS L'ÉCRAN ---
+            // On vide la zone, on définit sa largeur, et on la ramène sur l'écran (left: 0)
+            // avec un z-index négatif pour qu'elle reste invisible pour l'utilisateur
             dom.docRenderer.innerHTML = "";
             dom.docRenderer.style.width = "210mm";
+            dom.docRenderer.style.left = "0px";
+            dom.docRenderer.style.zIndex = "-10"; 
             
             console.log("2. Rendu DOCX (docx-preview)...");
             els.stat.innerText = "2/4 Rendu HTML...";
@@ -229,7 +233,10 @@ async function processFile(f) {
             outBlob = await html2pdf().set(opt).from(dom.docRenderer).output('blob');
             
             console.log(`✅ PDF Généré avec succès ! Poids compressé : ${(outBlob.size / 1024 / 1024).toFixed(2)} MB`);
+            
+            // --- FIX DE LA PAGE BLANCHE : RENVOYER LE RENDERER HORS ÉCRAN ---
             dom.docRenderer.innerHTML = ""; 
+            dom.docRenderer.style.left = "-9999px"; 
         }
         
         // --- 2. FFMPEG (Video/Image/Audio) ---
