@@ -170,7 +170,7 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> COMPRESSION + PAGINATION AUTO ---
+        // --- 1. DOCX -> COMPRESSION + PAGINATION AUTO + BASE64 IMAGES ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
             
@@ -179,9 +179,11 @@ async function processFile(f) {
             dom.docRenderer.style.width = "210mm";
             
             // Rendu Word pur (sans wrapper)
+            // CORRECTION IMPORTANTE : useBase64URL: true pour contourner les blocages de sécurité des images
             await docx.renderAsync(arrayBuffer, dom.docRenderer, null, { 
                 inWrapper: false, 
-                ignoreWidth: false 
+                ignoreWidth: false,
+                useBase64URL: true 
             });
 
             els.stat.innerText = `Paginating & Compressing...`;
@@ -193,7 +195,7 @@ async function processFile(f) {
                 filename: f.file.name.replace('.docx', '.pdf'),
                 image: { type: 'jpeg', quality: 0.75 }, // Compression d'image élevée (75%)
                 html2canvas: { 
-                    scale: 1.5, // 1.5 est suffisant pour le texte, divise le poids par 4 par rapport à 3.0
+                    scale: 1.5, // 1.5 est suffisant pour le texte, divise le poids par 4
                     useCORS: true 
                 }, 
                 jsPDF: { 
@@ -202,7 +204,7 @@ async function processFile(f) {
                     orientation: 'portrait',
                     compress: true // Active la compression native du PDF
                 },
-                // LE FIX : Coupe le PDF exactement avant chaque nouvelle page Word (.docx)
+                // LE FIX ULTIME : Coupe le PDF exactement avant chaque nouvelle page Word (.docx)
                 pagebreak: { mode: 'css', before: '.docx' } 
             };
 
