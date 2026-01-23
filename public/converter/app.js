@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { } // Mode Capture HD Reflow
+    doc:   { } 
 };
 
 let files = [];
@@ -103,7 +103,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Capture HD Anti-Chevauchement</div>`;
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Polices Forcées + Anti-Overlap</div>`;
     }
 
     div.innerHTML = `
@@ -172,7 +172,7 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> CAPTURE ANTI-CHEVAUCHEMENT ---
+        // --- 1. DOCX -> CAPTURE HD AVEC CHARGEMENT FORCE DES POLICES ---
         if (f.type === 'doc') {
             console.log(`\n--- TRAITEMENT DOCX : ${f.file.name} ---`);
             els.stat.innerText = "1/4 Lecture DOCX...";
@@ -191,60 +191,60 @@ async function processFile(f) {
                 useBase64URL: true 
             });
 
+            // CORRECTION 1 : Désactiver les ligatures (le "fi" collé) qui font bugger la position du texte
+            // CORRECTION 2 : Forcer une hauteur de ligne stricte
+            dom.docRenderer.style.fontVariantLigatures = "none";
+            dom.docRenderer.style.textRendering = "geometricPrecision";
+
             const pagesWord = Array.from(dom.docRenderer.querySelectorAll('.docx'));
             const totalPages = pagesWord.length;
 
             console.log(`✅ ${totalPages} pages détectées.`);
-            els.stat.innerText = `3/4 Traitement de ${totalPages} pages...`;
-            await new Promise(r => setTimeout(r, 1000)); 
+            
+            // CORRECTION 3 : FORCER LE CHARGEMENT DES POLICES
+            // C'est vital. On oblige le navigateur à attendre que TOUTES les polices soient téléchargées
+            // avant de faire le moindre calcul de positionnement.
+            els.stat.innerText = `3/4 Chargement des polices...`;
+            await document.fonts.ready; 
+            
+            // Pause allongée à 500ms pour les gros documents comme ton TFE.
+            await new Promise(r => setTimeout(r, 500)); 
 
             const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF({
-                orientation: 'p',
-                unit: 'mm',
-                format: 'a4',
-                compress: true 
-            });
+            const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true });
             const pdfW = 210;
 
-            // Pour éviter les bugs de capture dus au défilement, on remonte la page tout en haut.
             window.scrollTo(0, 0);
 
             console.log("3. Début de la capture page par page...");
             for (let i = 0; i < totalPages; i++) {
                 els.stat.innerText = `Capture Page ${i + 1}/${totalPages}...`;
                 els.bar.style.width = `${((i + 1) / totalPages) * 100}%`;
-                console.log(`📸 Capture de la page ${i + 1}...`);
 
                 if (i > 0) pdf.addPage();
 
-                // 1. On cache toutes les pages SAUF la page actuelle
                 pagesWord.forEach((p, idx) => p.style.display = (idx === i) ? 'block' : 'none');
 
-                // 2. CORRECTION DU BUG DE CHEVAUCHEMENT (Reflow Delay)
-                // On attend 150ms pour laisser au navigateur le temps de placer les éléments (images, textes flottants).
-                await new Promise(r => setTimeout(r, 150));
+                // CORRECTION 4 : Un délai de 250ms à chaque page pour que le "Reflow" CSS soit 100% fini.
+                await new Promise(r => setTimeout(r, 250));
 
-                // 3. Capture propre (Sans forcer les scroll/width qui faussaient la donne)
                 const canvas = await html2canvas(pagesWord[i], {
                     scale: 2.0, 
                     useCORS: true,
                     backgroundColor: "#ffffff",
-                    logging: false // Désactive les logs lourds de html2canvas
+                    scrollX: 0,
+                    scrollY: 0,
+                    logging: false
                 });
 
                 const imgData = canvas.toDataURL('image/jpeg', 0.80);
-                
-                // Maintien du ratio exact pour ne jamais étirer ou écraser
                 const imgHeight = (canvas.height * pdfW) / canvas.width;
                 pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgHeight);
             }
 
-            console.log("4. Compilation du fichier PDF...");
             els.stat.innerText = `4/4 Finalisation...`;
             outBlob = pdf.output('blob');
             
-            console.log(`✅ PDF Terminé ! Poids final : ${(outBlob.size / 1024 / 1024).toFixed(2)} MB`);
             dom.docRenderer.classList.add('hidden');
             dom.docRenderer.innerHTML = ""; 
         }
