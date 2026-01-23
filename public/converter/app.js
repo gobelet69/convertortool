@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { } // Plus besoin de config, LibreOffice gère tout nativement
+    doc:   { } // LibreOffice gère automatiquement la fidélité native
 };
 
 let files = [];
@@ -102,7 +102,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: LibreOffice WASM (Fidélité Microsoft Word)</div>`;
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: LibreOffice WebAssembly (via CDN)</div>`;
     }
 
     div.innerHTML = `
@@ -171,28 +171,21 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> LIBREOFFICE WASM (HAUTE FIDÉLITÉ) ---
+        // --- 1. DOCX -> LIBREOFFICE WASM (HAUTE FIDÉLITÉ VIA CDN) ---
         if (f.type === 'doc') {
             console.log(`\n--- TRAITEMENT DOCX (LibreOffice) : ${f.file.name} ---`);
             
             els.stat.innerText = "1/2 Chargement LibreOffice (Long la 1ère fois)...";
             els.bar.style.width = "40%";
             
-            // 💡 IMPORT DU MODULE LOCAL WASM
-            const LOConverter = await import('libreoffice-converter');
+            // 💡 IMPORT DU MODULE NAVIGATEUR (qui pointe vers le CDN déclaré dans index.html)
+            const { soffice } = await import('libreoffice-wasm');
 
             els.stat.innerText = "2/2 Conversion de haute fidélité en cours...";
             els.bar.style.width = "80%";
 
-            // 💡 LECTURE DU FICHIER EN BUFFER
-            const arrayBuffer = await f.file.arrayBuffer();
-
-            // 💡 CONVERSION NATIVE (Appel de la fonction du package)
-            // Le package prend le buffer en entrée et retourne un buffer PDF
-            const pdfBuffer = await LOConverter.convertToPdf(arrayBuffer);
-            
-            // Création du Blob final
-            outBlob = new Blob([pdfBuffer], { type: 'application/pdf' });
+            // 💡 CONVERSION NATIVE (Appel de la fonction compilée)
+            outBlob = await soffice.convertToPdf(f.file);
 
             els.stat.innerText = "Finalisation...";
             els.bar.style.width = "100%";
