@@ -197,6 +197,21 @@ async function processFile(f) {
             els.stat.innerText = `3/4 Traitement images...`;
             await new Promise(r => setTimeout(r, 1000)); 
 
+            // --- DEBUT DU CORRECTIF : NETTOYAGE DES IMAGES NON SUPPORTÉES ---
+            console.log("3.5 Nettoyage des images non supportées (EPS/WMF/Octet-stream)...");
+            const docImages = dom.docRenderer.getElementsByTagName('img');
+            for (let img of docImages) {
+                // Vérifier si la source de l'image est un flux brut ou un format vectoriel Microsoft obsolète
+                if (img.src.includes('application/octet-stream') || 
+                    img.src.includes('image/x-wmf') || 
+                    img.src.includes('image/x-emf')) {
+                    console.warn("⚠️ Image non supportée détectée et masquée pour la conversion.");
+                    // Cacher l'image pour que html2canvas ne plante pas
+                    img.style.display = 'none'; 
+                }
+            }
+            // --- FIN DU CORRECTIF ---
+
             console.log("3. Configuration de html2pdf (Compression + Pagination)...");
             // OPTIONS DE COMPRESSION + PAGINATION 1-pour-1
             const opt = {
