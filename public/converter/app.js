@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { } // Plus d'options, mode Haute Qualité automatique
+    doc:   { } // Mode automatique compressé
 };
 
 let files = [];
@@ -103,7 +103,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Capture HD (Exact Match)</div>`;
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Auto-Pagination & Compression activée</div>`;
     }
 
     div.innerHTML = `
@@ -170,57 +170,45 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> CAPTURE ECRAN HD PURE ---
+        // --- 1. DOCX -> COMPRESSION + PAGINATION AUTO ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
             
-            // 1. Rendu hors écran (left: -9999px pour ne rien voir clignoter)
+            // On vide la zone cachée
             dom.docRenderer.innerHTML = "";
+            dom.docRenderer.style.width = "210mm";
+            
+            // Rendu Word pur (sans wrapper)
             await docx.renderAsync(arrayBuffer, dom.docRenderer, null, { 
                 inWrapper: false, 
                 ignoreWidth: false 
             });
 
-            // docx-preview crée une balise <section class="docx"> par page Word
-            const pagesWord = Array.from(dom.docRenderer.querySelectorAll('.docx'));
-            const totalPages = pagesWord.length;
+            els.stat.innerText = `Paginating & Compressing...`;
+            await new Promise(r => setTimeout(r, 1000)); // Laisse le navigateur calculer les CSS
 
-            els.stat.innerText = `Loading ${totalPages} pages...`;
-            // Attente pour que les polices et images se chargent bien dans le DOM
-            await new Promise(r => setTimeout(r, 1000));
+            // OPTIONS DE COMPRESSION EXTREME + PAGINATION 1-pour-1
+            const opt = {
+                margin: 0, 
+                filename: f.file.name.replace('.docx', '.pdf'),
+                image: { type: 'jpeg', quality: 0.75 }, // Compression d'image élevée (75%)
+                html2canvas: { 
+                    scale: 1.5, // 1.5 est suffisant pour le texte, divise le poids par 4 par rapport à 3.0
+                    useCORS: true 
+                }, 
+                jsPDF: { 
+                    unit: 'mm', 
+                    format: 'a4', 
+                    orientation: 'portrait',
+                    compress: true // Active la compression native du PDF
+                },
+                // LE FIX : Coupe le PDF exactement avant chaque nouvelle page Word (.docx)
+                pagebreak: { mode: 'css', before: '.docx' } 
+            };
 
-            const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF('p', 'mm', 'a4');
-            const pdfW = 210; // Largeur A4 mm
-            const pdfH = 297; // Hauteur A4 mm
-
-            // 2. BOUCLE : 1 ELEMENT WORD = 1 CAPTURE = 1 PAGE PDF
-            for (let i = 0; i < totalPages; i++) {
-                els.stat.innerText = `Capturing Page ${i + 1} of ${totalPages}...`;
-                els.bar.style.width = `${((i + 1) / totalPages) * 100}%`;
-
-                if (i > 0) pdf.addPage();
-
-                // Capture de l'élément spécifique (la page Word)
-                // scale: 3 garantit une netteté absolue (Haute Définition)
-                const canvas = await html2canvas(pagesWord[i], {
-                    scale: 3.0, 
-                    useCORS: true,
-                    backgroundColor: "#ffffff",
-                    windowWidth: pagesWord[i].scrollWidth,
-                    windowHeight: pagesWord[i].scrollHeight
-                });
-
-                // On transforme le canvas en image
-                const imgData = canvas.toDataURL('image/jpeg', 0.98);
-                
-                // MAGIE : On colle l'image aux coordonnées (0,0) avec la largeur et hauteur exacte du PDF
-                // Cela reproduit la méthode "Capture d'écran Full Screen" que tu as demandée.
-                pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH);
-            }
-
-            outBlob = pdf.output('blob');
-            dom.docRenderer.innerHTML = ""; // Nettoyage
+            // Génération en un seul coup (rapide)
+            outBlob = await html2pdf().set(opt).from(dom.docRenderer).output('blob');
+            dom.docRenderer.innerHTML = ""; 
         }
         
         // --- 2. FFMPEG (Video/Image/Audio) ---
