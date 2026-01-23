@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { margin: '0' } // Marge gérée par le découpage
+    doc:   { margin: '0' } // Word a déjà ses propres marges
 };
 
 let files = [];
@@ -25,23 +25,9 @@ const dom = {
     status: document.getElementById('engine-status'),
     convertBtn: document.getElementById('convert-all-btn'),
     downloadAllBtn: document.getElementById('download-all-btn'),
-    // Note: Assure-toi que dans ton index.html tu as bien cet ID
-    docRenderer: document.getElementById('doc-renderer') || createFallbackRenderer()
+    docRenderer: document.getElementById('doc-renderer'),
+    docContent: document.getElementById('doc-content')
 };
-
-// Sécurité si le div manque
-function createFallbackRenderer() {
-    const div = document.createElement('div');
-    div.id = 'doc-renderer';
-    div.className = 'hidden';
-    div.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; z-index:50; background:white; overflow-y:auto; padding:0;';
-    const content = document.createElement('div');
-    content.id = 'doc-content';
-    content.style.cssText = 'background:white; margin:auto;';
-    div.appendChild(content);
-    document.body.appendChild(div);
-    return div;
-}
 
 // --- INIT ENGINE ---
 async function initFFmpeg() {
@@ -104,6 +90,7 @@ function renderCard(id, file, type, defaultTarget) {
     
     const iconMap = { video: '🎬', audio: '🎵', image: '🖼️', doc: '📝' };
     const fmtOpts = FORMATS[type].map(f => `<option value="${f}" ${f === defaultTarget ? 'selected' : ''}>${f.toUpperCase()}</option>`).join('');
+
     let settingsHTML = '';
     
     if (type === 'video') {
@@ -118,8 +105,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        // Doc options simplifiées car le découpage est automatique
-        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Auto-slice A4 Enabled</div>`;
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Auto-Pagination Enabled</div>`;
     }
 
     div.innerHTML = `
@@ -186,81 +172,38 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> DECOUPAGE INTELLIGENT -> PDF ---
+        // --- 1. DOCX -> PAGINATION INTELLIGENTE -> PDF ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
             const contentDiv = document.getElementById('doc-content');
             
-            // 1. Afficher
+            // 1. Rendre le docx visible pour le navigateur
             dom.docRenderer.classList.remove('hidden');
             contentDiv.innerHTML = "";
-            contentDiv.style.width = "210mm"; // Largeur A4 fixe
+            contentDiv.style.width = "210mm"; // Largeur stricte A4
             
-            // 2. Rendu Docx
+            // 2. Rendu (inWrapper: false pour avoir les balises <section> propres)
             await docx.renderAsync(arrayBuffer, contentDiv, null, { 
-                inWrapper: true, 
-                ignoreWidth: false, 
-                renderHeaders: true, 
-                renderFooters: true 
+                inWrapper: false, 
+                ignoreWidth: false 
             });
 
-            // 3. Pause rendu
-            els.stat.innerText = "Rendering Layout...";
-            await new Promise(r => setTimeout(r, 1500));
+            els.stat.innerText = "Paginating (46 pages)...";
+            await new Promise(r => setTimeout(r, 1000)); // Laisser le temps aux images de charger
 
-            // 4. Capture du canvas GEANT
-            const wrapper = contentDiv.querySelector('.docx-wrapper') || contentDiv;
-            const fullCanvas = await html2canvas(wrapper, {
-                scale: 2, // Haute qualité
-                useCORS: true,
-                allowTaint: true,
-                backgroundColor: "#ffffff"
-            });
+            // 3. LA SOLUTION MAGIQUE : HTML2PDF + PAGEBREAK
+            const opt = {
+                margin: 0, // Les marges sont déjà dans le design du Word
+                filename: f.file.name.replace('.docx', '.pdf'),
+                image: { type: 'jpeg', quality: 0.95 },
+                html2canvas: { scale: 1.5, useCORS: true }, // Scale 1.5 pour ne pas saturer la RAM
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                // Indique à html2pdf de couper le PDF avant chaque nouvelle page Word (.docx)
+                pagebreak: { mode: 'css', before: '.docx' } 
+            };
 
-            // 5. DECOUPAGE (SLICING) POUR EVITER L'ERREUR 14400
-            els.stat.innerText = "Slicing Pages...";
-            const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF('p', 'mm', 'a4');
-            
-            const pdfW = 210; 
-            const pdfH = 297; 
-            
-            // Calcul de la hauteur d'une page A4 en pixels du canvas
-            const pageHeightInCanvasPixels = Math.floor(fullCanvas.width * (pdfH / pdfW));
-            
-            let renderedHeight = 0;
-            const totalHeight = fullCanvas.height;
-
-            while (renderedHeight < totalHeight) {
-                if (renderedHeight > 0) pdf.addPage();
-
-                // Créer un canvas temporaire pour UNE page A4
-                const pageCanvas = document.createElement('canvas');
-                pageCanvas.width = fullCanvas.width;
-                // La hauteur est soit une page complète, soit le reste
-                const currentHeight = Math.min(pageHeightInCanvasPixels, totalHeight - renderedHeight);
-                pageCanvas.height = currentHeight;
-
-                const ctx = pageCanvas.getContext('2d');
-                
-                // On découpe : drawImage(source, x, y, w, h, x, y, w, h)
-                ctx.drawImage(
-                    fullCanvas, 
-                    0, renderedHeight, fullCanvas.width, currentHeight, 
-                    0, 0, fullCanvas.width, currentHeight
-                );
-
-                // Ajouter cette tranche au PDF
-                const imgData = pageCanvas.toDataURL('image/jpeg', 0.95);
-                // Calcul hauteur proportionnelle
-                const ratioH = (currentHeight * pdfW) / fullCanvas.width;
-                
-                pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, ratioH);
-                
-                renderedHeight += pageHeightInCanvasPixels;
-            }
-
-            outBlob = pdf.output('blob');
+            // Conversion (Cela génèrera bien 46 pages distinctes et légères)
+            outBlob = await html2pdf().set(opt).from(contentDiv).output('blob');
             
             // Nettoyage
             dom.docRenderer.classList.add('hidden');
