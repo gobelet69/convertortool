@@ -1,34 +1,15 @@
-import { Worker } from 'worker_threads';
-import { fileURLToPath } from 'url';
-import { resolve, dirname, join } from 'path';
-import { randomUUID } from 'crypto';
-import { existsSync } from 'fs';
-import { fork } from 'child_process';
-import { deflateSync } from 'zlib';
-import { z } from 'zod';
+'use strict';
+
+var worker_threads = require('worker_threads');
+
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
 
 // src/types.ts
-var DEFAULT_WASM_BASE_URL = "/wasm/";
-function createWasmPaths(baseUrl = DEFAULT_WASM_BASE_URL) {
-  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  return {
-    sofficeJs: `${base}soffice.js`,
-    sofficeWasm: `${base}soffice.wasm`,
-    sofficeData: `${base}soffice.data`,
-    sofficeWorkerJs: `${base}soffice.worker.js`
-  };
-}
-var ConversionErrorCode = /* @__PURE__ */ ((ConversionErrorCode2) => {
-  ConversionErrorCode2["UNKNOWN"] = "UNKNOWN";
-  ConversionErrorCode2["INVALID_INPUT"] = "INVALID_INPUT";
-  ConversionErrorCode2["UNSUPPORTED_FORMAT"] = "UNSUPPORTED_FORMAT";
-  ConversionErrorCode2["CORRUPTED_DOCUMENT"] = "CORRUPTED_DOCUMENT";
-  ConversionErrorCode2["PASSWORD_REQUIRED"] = "PASSWORD_REQUIRED";
-  ConversionErrorCode2["WASM_NOT_INITIALIZED"] = "WASM_NOT_INITIALIZED";
-  ConversionErrorCode2["CONVERSION_FAILED"] = "CONVERSION_FAILED";
-  ConversionErrorCode2["LOAD_FAILED"] = "LOAD_FAILED";
-  return ConversionErrorCode2;
-})(ConversionErrorCode || {});
 var ConversionError = class extends Error {
   code;
   details;
@@ -58,14 +39,6 @@ var FORMAT_FILTERS = {
   jpg: "writer_jpg_Export",
   svg: "writer_svg_Export"
 };
-var LOKDocumentType = /* @__PURE__ */ ((LOKDocumentType4) => {
-  LOKDocumentType4[LOKDocumentType4["TEXT"] = 0] = "TEXT";
-  LOKDocumentType4[LOKDocumentType4["SPREADSHEET"] = 1] = "SPREADSHEET";
-  LOKDocumentType4[LOKDocumentType4["PRESENTATION"] = 2] = "PRESENTATION";
-  LOKDocumentType4[LOKDocumentType4["DRAWING"] = 3] = "DRAWING";
-  LOKDocumentType4[LOKDocumentType4["OTHER"] = 4] = "OTHER";
-  return LOKDocumentType4;
-})(LOKDocumentType || {});
 var FORMAT_MIME_TYPES = {
   pdf: "application/pdf",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -232,20 +205,6 @@ function getConversionErrorMessage(inputFormat, outputFormat) {
 // src/lok-bindings.ts
 var LOK_MOUSEEVENT_BUTTONDOWN = 0;
 var LOK_MOUSEEVENT_BUTTONUP = 1;
-var LOK_MOUSEEVENT_MOVE = 2;
-var LOK_KEYEVENT_KEYINPUT = 0;
-var LOK_KEYEVENT_KEYUP = 1;
-var LOK_SELTYPE_NONE = 0;
-var LOK_SELTYPE_TEXT = 1;
-var LOK_SELTYPE_CELL = 2;
-var LOK_SETTEXTSELECTION_START = 0;
-var LOK_SETTEXTSELECTION_END = 1;
-var LOK_SETTEXTSELECTION_RESET = 2;
-var LOK_DOCTYPE_TEXT = 0;
-var LOK_DOCTYPE_SPREADSHEET = 1;
-var LOK_DOCTYPE_PRESENTATION = 2;
-var LOK_DOCTYPE_DRAWING = 3;
-var LOK_DOCTYPE_OTHER = 4;
 var LOK_CALLBACK_INVALIDATE_TILES = 0;
 var LOK_CALLBACK_INVALIDATE_VISIBLE_CURSOR = 1;
 var LOK_CALLBACK_TEXT_SELECTION = 2;
@@ -1669,7 +1628,7 @@ var LibreOfficeConverter = class {
     }
     if (this.initializing) {
       while (this.initializing) {
-        await new Promise((resolve3) => setTimeout(resolve3, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
       return;
     }
@@ -1701,7 +1660,7 @@ var LibreOfficeConverter = class {
     }
     if (this.initializing) {
       while (this.initializing) {
-        await new Promise((resolve3) => setTimeout(resolve3, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
       return;
     }
@@ -2685,956 +2644,6 @@ var LibreOfficeConverter = class {
     this.options.onProgress?.({ phase, percent, message });
   }
 };
-var WorkerConverter = class {
-  worker = null;
-  pending = /* @__PURE__ */ new Map();
-  options;
-  initialized = false;
-  initializing = false;
-  constructor(options = {}) {
-    this.options = {
-      wasmPath: "./wasm",
-      verbose: false,
-      ...options
-    };
-  }
-  /**
-   * Initialize the converter
-   */
-  async initialize() {
-    if (this.initialized) {
-      return;
-    }
-    if (this.initializing) {
-      while (this.initializing) {
-        await new Promise((resolve3) => setTimeout(resolve3, 100));
-      }
-      return;
-    }
-    this.initializing = true;
-    try {
-      let workerPath;
-      if (this.options.workerPath) {
-        workerPath = resolve(this.options.workerPath);
-      } else {
-        try {
-          const currentDir = dirname(fileURLToPath(import.meta.url));
-          workerPath = join(currentDir, "node.worker.cjs");
-        } catch {
-          workerPath = join(__dirname, "node.worker.cjs");
-        }
-        if (!existsSync(workerPath)) {
-          const distWorkerPath = resolve(process.cwd(), "dist", "node.worker.cjs");
-          if (existsSync(distWorkerPath)) {
-            workerPath = distWorkerPath;
-          }
-        }
-      }
-      this.worker = new Worker(workerPath);
-      this.worker.on("message", (response) => {
-        if ("type" in response && response.type === "ready") {
-          return;
-        }
-        const res = response;
-        const pending = this.pending.get(res.id);
-        if (pending) {
-          clearTimeout(pending.timeout);
-          this.pending.delete(res.id);
-          if (res.success) {
-            pending.resolve(res.data);
-          } else {
-            pending.reject(new ConversionError(
-              "CONVERSION_FAILED" /* CONVERSION_FAILED */,
-              res.error || "Unknown worker error"
-            ));
-          }
-        }
-      });
-      this.worker.on("error", (error) => {
-        for (const [, pending] of this.pending) {
-          clearTimeout(pending.timeout);
-          pending.reject(error);
-        }
-        this.pending.clear();
-      });
-      await new Promise((resolve3) => {
-        const handler = (msg) => {
-          if (msg.type === "ready") {
-            this.worker?.off("message", handler);
-            resolve3();
-          }
-        };
-        this.worker?.on("message", handler);
-      });
-      await this.sendMessage("init", {
-        wasmPath: this.options.wasmPath,
-        verbose: this.options.verbose
-      });
-      this.initialized = true;
-      this.options.onReady?.();
-    } catch (error) {
-      const convError = error instanceof ConversionError ? error : new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        `Failed to initialize worker: ${String(error)}`
-      );
-      this.options.onError?.(convError);
-      throw convError;
-    } finally {
-      this.initializing = false;
-    }
-  }
-  /**
-   * Send a message to the worker and wait for response
-   */
-  sendMessage(type, payload) {
-    return new Promise((resolve3, reject) => {
-      if (!this.worker) {
-        reject(new ConversionError(
-          "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-          "Worker not initialized"
-        ));
-        return;
-      }
-      const id = randomUUID();
-      const timeout = setTimeout(() => {
-        const pending = this.pending.get(id);
-        if (pending) {
-          this.pending.delete(id);
-          pending.reject(new ConversionError(
-            "CONVERSION_FAILED" /* CONVERSION_FAILED */,
-            "Worker operation timeout"
-          ));
-        }
-      }, 3e5);
-      this.pending.set(id, { resolve: resolve3, reject, timeout });
-      this.worker.postMessage({ type, id, payload });
-    });
-  }
-  /**
-   * Convert a document
-   */
-  async convert(input, options, filename = "document") {
-    if (!this.initialized || !this.worker) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const startTime = Date.now();
-    const inputData = this.normalizeInput(input);
-    if (inputData.length === 0) {
-      throw new ConversionError(
-        "INVALID_INPUT" /* INVALID_INPUT */,
-        "Empty document provided"
-      );
-    }
-    const inputFormat = options.inputFormat || this.getExtensionFromFilename(filename) || "docx";
-    const outputFormat = options.outputFormat;
-    const result = await this.sendMessage("convert", {
-      inputData,
-      inputFormat,
-      outputFormat,
-      filename
-    });
-    const baseName = this.getBasename(filename);
-    const outputFilename = `${baseName}.${outputFormat}`;
-    return {
-      data: new Uint8Array(result),
-      mimeType: FORMAT_MIME_TYPES[outputFormat],
-      filename: outputFilename,
-      duration: Date.now() - startTime
-    };
-  }
-  /**
-   * Get the number of pages in a document
-   */
-  async getPageCount(input, options) {
-    if (!this.initialized || !this.worker) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    const inputFormat = options.inputFormat || "docx";
-    return this.sendMessage("getPageCount", { inputData, inputFormat });
-  }
-  /**
-   * Get document information including type and valid output formats
-   */
-  async getDocumentInfo(input, options) {
-    if (!this.initialized || !this.worker) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    const inputFormat = options.inputFormat || "docx";
-    return this.sendMessage("getDocumentInfo", { inputData, inputFormat });
-  }
-  /**
-   * Render a single page as an image
-   */
-  async renderPage(input, options, pageIndex, width, height = 0) {
-    if (!this.initialized || !this.worker) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    const inputFormat = options.inputFormat || "docx";
-    const result = await this.sendMessage("renderPage", {
-      inputData,
-      inputFormat,
-      pageIndex,
-      width,
-      height
-    });
-    const preview = result;
-    return {
-      page: pageIndex,
-      data: new Uint8Array(preview.data),
-      width: preview.width,
-      height: preview.height
-    };
-  }
-  /**
-   * Render multiple page previews
-   */
-  async renderPagePreviews(input, options, renderOptions = {}) {
-    if (!this.initialized || !this.worker) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    const inputFormat = options.inputFormat || "docx";
-    const rawPreviews = await this.sendMessage("renderPagePreviews", {
-      inputData,
-      inputFormat,
-      width: renderOptions.width || 800,
-      height: renderOptions.height || 0,
-      pageIndices: renderOptions.pageIndices
-    });
-    return rawPreviews.map((preview) => ({
-      page: preview.page,
-      data: new Uint8Array(preview.data),
-      width: preview.width,
-      height: preview.height
-    }));
-  }
-  /**
-   * Render a page at full quality (native resolution based on DPI)
-   * @param input Document data
-   * @param options Must include inputFormat
-   * @param pageIndex Zero-based page index to render
-   * @param renderOptions DPI and max dimension settings
-   * @returns Full quality page preview with RGBA data and DPI info
-   */
-  async renderPageFullQuality(input, options, pageIndex, renderOptions = {}) {
-    if (!this.initialized || !this.worker) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    const inputFormat = options.inputFormat || "docx";
-    const rawPreview = await this.sendMessage("renderPageFullQuality", {
-      inputData,
-      inputFormat,
-      pageIndex,
-      dpi: renderOptions.dpi ?? 150,
-      maxDimension: renderOptions.maxDimension,
-      editMode: renderOptions.editMode ?? false
-    });
-    return {
-      page: rawPreview.page,
-      data: new Uint8Array(rawPreview.data),
-      width: rawPreview.width,
-      height: rawPreview.height,
-      dpi: rawPreview.dpi
-    };
-  }
-  /**
-   * Extract text content from a document
-   */
-  async getDocumentText(input, inputFormat) {
-    if (!this.initialized || !this.worker) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    return this.sendMessage("getDocumentText", { inputData, inputFormat });
-  }
-  /**
-   * Get page/slide names from a document
-   */
-  async getPageNames(input, inputFormat) {
-    if (!this.initialized || !this.worker) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    return this.sendMessage("getPageNames", { inputData, inputFormat });
-  }
-  // ============================================
-  // Editor Operations
-  // ============================================
-  /**
-   * Open a document for editing
-   * Returns a session ID that can be used for subsequent editor operations
-   */
-  async openDocument(input, options) {
-    if (!this.initialized || !this.worker) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    const inputFormat = options.inputFormat || "docx";
-    return this.sendMessage("openDocument", { inputData, inputFormat });
-  }
-  /**
-   * Execute an editor operation on an open document session
-   * @param sessionId - The session ID from openDocument
-   * @param method - The editor method to call (e.g., 'insertParagraph', 'getStructure')
-   * @param args - Arguments to pass to the method
-   */
-  async editorOperation(sessionId, method, args) {
-    if (!this.initialized || !this.worker) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    return this.sendMessage("editorOperation", { sessionId, method, args: args ?? [] });
-  }
-  /**
-   * Close an editor session and get the modified document
-   * @param sessionId - The session ID from openDocument
-   * @returns The modified document data, or undefined if save failed
-   */
-  async closeDocument(sessionId) {
-    if (!this.initialized || !this.worker) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const result = await this.sendMessage("closeDocument", { sessionId });
-    return result ? new Uint8Array(result) : void 0;
-  }
-  /**
-   * Destroy the converter and terminate the worker
-   */
-  async destroy() {
-    for (const [, pending] of this.pending) {
-      clearTimeout(pending.timeout);
-    }
-    if (this.worker) {
-      try {
-        await this.sendMessage("destroy");
-      } catch {
-      }
-      for (const [, pending] of this.pending) {
-        clearTimeout(pending.timeout);
-      }
-      this.worker.removeAllListeners();
-      await this.worker.terminate();
-      this.worker = null;
-    }
-    this.initialized = false;
-    this.pending.clear();
-  }
-  /**
-   * Check if the converter is ready
-   */
-  isReady() {
-    return this.initialized && this.worker !== null;
-  }
-  normalizeInput(input) {
-    if (input instanceof Uint8Array) {
-      return input;
-    }
-    if (input instanceof ArrayBuffer) {
-      return new Uint8Array(input);
-    }
-    return new Uint8Array(input);
-  }
-  getExtensionFromFilename(filename) {
-    const parts = filename.split(".");
-    if (parts.length > 1) {
-      return parts.pop()?.toLowerCase() || null;
-    }
-    return null;
-  }
-  getBasename(filename) {
-    const lastDot = filename.lastIndexOf(".");
-    if (lastDot > 0) {
-      return filename.substring(0, lastDot);
-    }
-    return filename;
-  }
-};
-async function createWorkerConverter(options = {}) {
-  const converter = new WorkerConverter(options);
-  await converter.initialize();
-  return converter;
-}
-var SubprocessConverter = class {
-  child = null;
-  pending = /* @__PURE__ */ new Map();
-  options;
-  initialized = false;
-  initializing = false;
-  workerPath = "";
-  constructor(options = {}) {
-    this.options = {
-      wasmPath: "./wasm",
-      verbose: false,
-      maxInitRetries: 3,
-      maxConversionRetries: 2,
-      restartOnMemoryError: true,
-      ...options
-    };
-  }
-  isMemoryError(error) {
-    const msg = error instanceof Error ? error.message : error;
-    return msg.includes("memory access out of bounds") || msg.includes("unreachable") || msg.includes("table index is out of bounds") || msg.includes("null function");
-  }
-  async spawnWorker() {
-    if (!this.workerPath) {
-      try {
-        const currentDir = dirname(fileURLToPath(import.meta.url));
-        if (currentDir.endsWith("/src") || currentDir.endsWith("\\src")) {
-          this.workerPath = join(currentDir, "..", "dist", "subprocess.worker.cjs");
-        } else {
-          this.workerPath = join(currentDir, "subprocess.worker.cjs");
-        }
-      } catch {
-        this.workerPath = join(__dirname, "subprocess.worker.cjs");
-      }
-    }
-    const wasmPath = resolve(this.options.wasmPath || "./wasm");
-    this.child = fork(this.workerPath, [], {
-      env: { ...process.env, WASM_PATH: wasmPath, VERBOSE: String(this.options.verbose || false) },
-      stdio: ["pipe", "pipe", "pipe", "ipc"]
-    });
-    this.child.stdout?.on("data", (d) => {
-      if (this.options.verbose) process.stdout.write(d);
-    });
-    this.child.stderr?.on("data", (d) => {
-      if (this.options.verbose) process.stderr.write(d);
-    });
-    this.child.on("message", (msg) => {
-      if (msg.type === "response" && msg.id) {
-        const p = this.pending.get(msg.id);
-        if (p) {
-          this.pending.delete(msg.id);
-          msg.success ? p.resolve(msg.data) : p.reject(new ConversionError("CONVERSION_FAILED" /* CONVERSION_FAILED */, msg.error || "Error"));
-        }
-      }
-    });
-    this.child.on("error", (e) => {
-      for (const p of this.pending.values()) p.reject(e);
-      this.pending.clear();
-    });
-    this.child.on("exit", (code) => {
-      if (code !== 0) {
-        for (const p of this.pending.values()) p.reject(new Error(`Exit ${code}`));
-        this.pending.clear();
-      }
-      this.child = null;
-      this.initialized = false;
-    });
-    await new Promise((resolve3, reject) => {
-      const t = setTimeout(() => reject(new Error("Subprocess start timeout")), 3e4);
-      const h = (msg) => {
-        if (msg.type === "ready") {
-          clearTimeout(t);
-          this.child?.off("message", h);
-          resolve3();
-        } else if (msg.type === "error") {
-          clearTimeout(t);
-          this.child?.off("message", h);
-          reject(new Error(msg.error));
-        }
-      };
-      this.child?.on("message", h);
-    });
-    await this.send("init", void 0, 18e4);
-  }
-  killWorker() {
-    if (this.child) {
-      try {
-        this.child.kill("SIGKILL");
-      } catch {
-      }
-      this.child = null;
-    }
-    this.initialized = false;
-    this.pending.clear();
-  }
-  async initialize() {
-    if (this.initialized) return;
-    if (this.initializing) {
-      while (this.initializing) await new Promise((r) => setTimeout(r, 100));
-      return;
-    }
-    this.initializing = true;
-    const maxRetries = this.options.maxInitRetries || 3;
-    let lastError = null;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        await this.killWorker();
-        await this.spawnWorker();
-        this.initialized = true;
-        this.initializing = false;
-        this.options.onReady?.();
-        return;
-      } catch (e) {
-        lastError = e instanceof Error ? e : new Error(String(e));
-        if (this.options.verbose) {
-          console.error(`[SubprocessConverter] Init attempt ${attempt}/${maxRetries} failed:`, lastError.message);
-        }
-        await this.killWorker();
-        if (attempt < maxRetries) {
-          await new Promise((r) => setTimeout(r, 500 * attempt));
-        }
-      }
-    }
-    this.initializing = false;
-    const err = new ConversionError("WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */, `Init failed after ${maxRetries} attempts: ${lastError?.message}`);
-    this.options.onError?.(err);
-    throw err;
-  }
-  send(type, payload, timeout = 3e5) {
-    return new Promise((resolve3, reject) => {
-      if (!this.child) {
-        reject(new ConversionError("WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */, "No process"));
-        return;
-      }
-      const id = randomUUID();
-      this.pending.set(id, { resolve: resolve3, reject });
-      this.child.send({ type, id, payload });
-      setTimeout(() => {
-        if (this.pending.has(id)) {
-          this.pending.delete(id);
-          reject(new ConversionError("CONVERSION_FAILED" /* CONVERSION_FAILED */, "Timeout"));
-        }
-      }, timeout);
-    });
-  }
-  normalizeInput(input) {
-    if (input instanceof Uint8Array) {
-      return input;
-    }
-    if (input instanceof ArrayBuffer) {
-      return new Uint8Array(input);
-    }
-    return new Uint8Array(input);
-  }
-  async convert(input, options, filename = "document") {
-    if (!this.initialized || !this.child) throw new ConversionError("WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */, "Not initialized");
-    const start = Date.now();
-    const data = this.normalizeInput(input);
-    if (data.length === 0) throw new ConversionError("INVALID_INPUT" /* INVALID_INPUT */, "Empty");
-    const ext = options.inputFormat || (filename.includes(".") ? filename.slice(filename.lastIndexOf(".") + 1).toLowerCase() : "docx");
-    let filter = FORMAT_FILTER_OPTIONS[options.outputFormat] || "";
-    if (options.outputFormat === "pdf" && options.pdf) {
-      const o = [];
-      if (options.pdf.pdfaLevel) o.push(`SelectPdfVersion=${{ "PDF/A-1b": 1, "PDF/A-2b": 2, "PDF/A-3b": 3 }[options.pdf.pdfaLevel] || 0}`);
-      if (options.pdf.quality !== void 0) o.push(`Quality=${options.pdf.quality}`);
-      if (o.length) filter = o.join(",");
-    }
-    const maxRetries = this.options.maxConversionRetries || 2;
-    let lastError = null;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const r = await this.send("convert", {
-          inputData: Array.from(data),
-          inputExt: ext,
-          outputFormat: OUTPUT_FORMAT_TO_LOK[options.outputFormat],
-          filterOptions: filter
-        });
-        const base = filename.includes(".") ? filename.slice(0, filename.lastIndexOf(".")) : filename;
-        return {
-          data: new Uint8Array(r),
-          mimeType: FORMAT_MIME_TYPES[options.outputFormat],
-          filename: `${base}.${options.outputFormat}`,
-          duration: Date.now() - start
-        };
-      } catch (e) {
-        lastError = e instanceof Error ? e : new Error(String(e));
-        if (this.options.verbose) {
-          console.error(`[SubprocessConverter] Conversion attempt ${attempt}/${maxRetries} failed:`, lastError.message);
-        }
-        if (this.isMemoryError(lastError) && this.options.restartOnMemoryError && attempt < maxRetries) {
-          if (this.options.verbose) {
-            console.error("[SubprocessConverter] Memory error detected, restarting subprocess...");
-          }
-          await this.killWorker();
-          await this.spawnWorker();
-          this.initialized = true;
-        } else if (attempt < maxRetries) {
-          await new Promise((r) => setTimeout(r, 100));
-        }
-      }
-    }
-    throw lastError || new ConversionError("CONVERSION_FAILED" /* CONVERSION_FAILED */, "Conversion failed");
-  }
-  /**
-   * Get the number of pages in a document
-   */
-  async getPageCount(input, options) {
-    if (!this.initialized || !this.child) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    return this.send("getPageCount", {
-      inputData: Array.from(inputData),
-      inputFormat: options.inputFormat
-    });
-  }
-  /**
-   * Get document information including type and valid output formats
-   */
-  async getDocumentInfo(input, options) {
-    if (!this.initialized || !this.child) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    return this.send("getDocumentInfo", {
-      inputData: Array.from(inputData),
-      inputFormat: options.inputFormat
-    });
-  }
-  /**
-   * Render a single page as an image
-   */
-  async renderPage(input, options, pageIndex, width, height = 0) {
-    if (!this.initialized || !this.child) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    const result = await this.send("renderPage", {
-      inputData: Array.from(inputData),
-      inputFormat: options.inputFormat,
-      pageIndex,
-      width,
-      height
-    });
-    return {
-      page: pageIndex,
-      data: new Uint8Array(result.data),
-      width: result.width,
-      height: result.height
-    };
-  }
-  /**
-   * Render multiple page previews
-   */
-  async renderPagePreviews(input, options, renderOptions = {}) {
-    if (!this.initialized || !this.child) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    const result = await this.send("renderPagePreviews", {
-      inputData: Array.from(inputData),
-      inputFormat: options.inputFormat,
-      width: renderOptions.width || 800,
-      height: renderOptions.height || 0,
-      pageIndices: renderOptions.pageIndices
-    });
-    return result.map((preview) => ({
-      page: preview.page,
-      data: new Uint8Array(preview.data),
-      width: preview.width,
-      height: preview.height
-    }));
-  }
-  /**
-   * Render a page at full quality (native resolution based on DPI)
-   * @param input Document data
-   * @param options Must include inputFormat
-   * @param pageIndex Zero-based page index to render
-   * @param renderOptions DPI and max dimension settings
-   * @returns Full quality page preview with RGBA data and DPI info
-   */
-  async renderPageFullQuality(input, options, pageIndex, renderOptions = {}) {
-    if (!this.initialized || !this.child) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    const result = await this.send("renderPageFullQuality", {
-      inputData: Array.from(inputData),
-      inputFormat: options.inputFormat,
-      pageIndex,
-      dpi: renderOptions.dpi ?? 150,
-      maxDimension: renderOptions.maxDimension,
-      editMode: renderOptions.editMode ?? false
-    });
-    return {
-      page: result.page,
-      data: new Uint8Array(result.data),
-      width: result.width,
-      height: result.height,
-      dpi: result.dpi
-    };
-  }
-  /**
-   * Extract text content from a document
-   */
-  async getDocumentText(input, inputFormat) {
-    if (!this.initialized || !this.child) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    return this.send("getDocumentText", {
-      inputData: Array.from(inputData),
-      inputFormat
-    });
-  }
-  /**
-   * Get page/slide names from a document
-   */
-  async getPageNames(input, inputFormat) {
-    if (!this.initialized || !this.child) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    return this.send("getPageNames", {
-      inputData: Array.from(inputData),
-      inputFormat
-    });
-  }
-  // ============================================
-  // Editor Operations
-  // ============================================
-  /**
-   * Open a document for editing
-   * Returns a session ID that can be used for subsequent editor operations
-   */
-  async openDocument(input, options) {
-    if (!this.initialized || !this.child) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const inputData = this.normalizeInput(input);
-    return this.send("openDocument", {
-      inputData: Array.from(inputData),
-      inputFormat: options.inputFormat
-    });
-  }
-  /**
-   * Execute an editor operation on an open document session
-   * @param sessionId - The session ID from openDocument
-   * @param method - The editor method to call (e.g., 'insertParagraph', 'getStructure')
-   * @param args - Arguments to pass to the method
-   */
-  async editorOperation(sessionId, method, args) {
-    if (!this.initialized || !this.child) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    return this.send("editorOperation", { sessionId, method, args: args ?? [] });
-  }
-  /**
-   * Close an editor session and get the modified document
-   * @param sessionId - The session ID from openDocument
-   * @returns The modified document data, or undefined if save failed
-   */
-  async closeDocument(sessionId) {
-    if (!this.initialized || !this.child) {
-      throw new ConversionError(
-        "WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */,
-        "Converter not initialized. Call initialize() first."
-      );
-    }
-    const result = await this.send("closeDocument", { sessionId });
-    return result ? new Uint8Array(result) : void 0;
-  }
-  async destroy() {
-    if (this.child) {
-      try {
-        await this.send("destroy");
-      } catch {
-      }
-      if (this.child) {
-        try {
-          this.child.kill("SIGKILL");
-        } catch {
-        }
-        this.child = null;
-      }
-    }
-    this.initialized = false;
-    this.pending.clear();
-  }
-  isReady() {
-    return this.initialized && this.child !== null;
-  }
-};
-async function createSubprocessConverter(options = {}) {
-  const c = new SubprocessConverter(options);
-  await c.initialize();
-  return c;
-}
-var sharpModule = void 0;
-async function isSharpAvailable() {
-  if (sharpModule === void 0) {
-    try {
-      const mod = await import('sharp');
-      sharpModule = mod.default;
-    } catch {
-      sharpModule = null;
-    }
-  }
-  return sharpModule !== null;
-}
-async function getSharp() {
-  if (sharpModule === void 0) {
-    await isSharpAvailable();
-  }
-  return sharpModule ?? null;
-}
-async function encodeImage(rgbaData, width, height, options = { format: "png" }) {
-  const sharp = await getSharp();
-  if (sharp) {
-    return encodeWithSharp(sharp, rgbaData, width, height, options);
-  }
-  if (options.format !== "png") {
-    throw new Error(
-      `Format '${options.format}' requires sharp to be installed. Install it with: npm install sharp`
-    );
-  }
-  return encodePngFallback(rgbaData, width, height);
-}
-async function encodeWithSharp(sharp, rgbaData, width, height, options) {
-  let pipeline = sharp(Buffer.from(rgbaData), {
-    raw: {
-      width,
-      height,
-      channels: 4
-    }
-  });
-  switch (options.format) {
-    case "png":
-      pipeline = pipeline.png({
-        compressionLevel: options.compressionLevel ?? 6
-      });
-      break;
-    case "jpeg":
-      pipeline = pipeline.jpeg({
-        quality: options.quality ?? 90
-      });
-      break;
-    case "webp":
-      pipeline = pipeline.webp({
-        quality: options.quality ?? 90
-      });
-      break;
-  }
-  return pipeline.toBuffer();
-}
-function encodePngFallback(rgbaData, width, height) {
-  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  const crcTable = new Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) {
-      c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
-    }
-    crcTable[n] = c;
-  }
-  function crc32(data) {
-    let crc = 4294967295;
-    for (let i = 0; i < data.length; i++) {
-      const tableIndex = (crc ^ data[i]) & 255;
-      crc = crcTable[tableIndex] ^ crc >>> 8;
-    }
-    return (crc ^ 4294967295) >>> 0;
-  }
-  function createChunk(type, data) {
-    const typeBytes = Buffer.from(type);
-    const length = Buffer.alloc(4);
-    length.writeUInt32BE(data.length);
-    const crcData = Buffer.concat([typeBytes, data]);
-    const crcValue = Buffer.alloc(4);
-    crcValue.writeUInt32BE(crc32(crcData));
-    return Buffer.concat([length, typeBytes, data, crcValue]);
-  }
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-  const ihdrChunk = createChunk("IHDR", ihdr);
-  const rowSize = 1 + width * 4;
-  const rawData = Buffer.alloc(height * rowSize);
-  for (let y = 0; y < height; y++) {
-    const rowOffset = y * rowSize;
-    rawData[rowOffset] = 0;
-    for (let x = 0; x < width; x++) {
-      const srcOffset = (y * width + x) * 4;
-      const dstOffset = rowOffset + 1 + x * 4;
-      rawData[dstOffset] = rgbaData[srcOffset] ?? 0;
-      rawData[dstOffset + 1] = rgbaData[srcOffset + 1] ?? 0;
-      rawData[dstOffset + 2] = rgbaData[srcOffset + 2] ?? 0;
-      rawData[dstOffset + 3] = rgbaData[srcOffset + 3] ?? 0;
-    }
-  }
-  const compressed = deflateSync(rawData);
-  const idatChunk = createChunk("IDAT", compressed);
-  const iendChunk = createChunk("IEND", Buffer.alloc(0));
-  return Buffer.concat([signature, ihdrChunk, idatChunk, iendChunk]);
-}
-async function rgbaToPng(rgbaData, width, height) {
-  return encodeImage(rgbaData, width, height, { format: "png" });
-}
-async function rgbaToJpeg(rgbaData, width, height, quality = 90) {
-  return encodeImage(rgbaData, width, height, { format: "jpeg", quality });
-}
-async function rgbaToWebp(rgbaData, width, height, quality = 90) {
-  return encodeImage(rgbaData, width, height, { format: "webp", quality });
-}
 
 // src/editor/base.ts
 var OfficeEditor = class {
@@ -5235,859 +4244,350 @@ var DrawEditor = class extends OfficeEditor {
     return parseInt(hex.replace("#", ""), 16);
   }
 };
-var TextPositionSchema = z.object({
-  paragraph: z.number().int().min(0).describe("Zero-based paragraph index"),
-  character: z.number().int().min(0).describe("Zero-based character offset within the paragraph")
-});
-var TextRangeSchema = z.object({
-  start: TextPositionSchema.describe("Start position of the range"),
-  end: TextPositionSchema.describe("End position of the range")
-});
-var TextFormatSchema = z.object({
-  bold: z.boolean().optional().describe("Apply bold formatting"),
-  italic: z.boolean().optional().describe("Apply italic formatting"),
-  underline: z.boolean().optional().describe("Apply underline formatting"),
-  fontSize: z.number().positive().optional().describe("Font size in points"),
-  fontName: z.string().optional().describe('Font family name (e.g., "Arial", "Times New Roman")'),
-  color: z.string().optional().describe('Text color as hex string (e.g., "#FF0000")')
-});
-var CellRefSchema = z.union([
-  z.string().describe('A1-style cell reference (e.g., "A1", "B5", "AA100")'),
-  z.object({
-    row: z.number().int().min(0).describe("Zero-based row index"),
-    col: z.number().int().min(0).describe("Zero-based column index")
-  })
-]);
-var RangeRefSchema = z.union([
-  z.string().describe('A1-style range (e.g., "A1:B10", "C5:D20")'),
-  z.object({
-    start: CellRefSchema.describe("Start cell of the range"),
-    end: CellRefSchema.describe("End cell of the range")
-  })
-]);
-var SheetRefSchema = z.union([
-  z.string().describe("Sheet name"),
-  z.number().int().min(0).describe("Zero-based sheet index")
-]);
-var CellValueSchema = z.union([
-  z.string(),
-  z.number(),
-  z.boolean(),
-  z.null()
-]).describe("Cell value: string, number, boolean, or null");
-var CellFormatSchema = z.object({
-  bold: z.boolean().optional().describe("Apply bold formatting"),
-  numberFormat: z.string().optional().describe('Number format string (e.g., "#,##0.00", "0%")'),
-  backgroundColor: z.string().optional().describe("Background color as hex string"),
-  textColor: z.string().optional().describe("Text color as hex string")
-});
-var SlideLayoutSchema = z.enum(["blank", "title", "titleContent", "twoColumn"]).describe("Slide layout type");
-var ShapeTypeSchema = z.enum(["rectangle", "ellipse", "line", "text", "image", "group", "other"]).describe("Type of shape to create");
-var RectangleSchema = z.object({
-  x: z.number().describe("X position in twips"),
-  y: z.number().describe("Y position in twips"),
-  width: z.number().positive().describe("Width in twips"),
-  height: z.number().positive().describe("Height in twips")
-});
-var PositionSchema = z.object({
-  x: z.number().describe("X position in twips"),
-  y: z.number().describe("Y position in twips")
-});
-var SizeSchema = z.object({
-  width: z.number().positive().describe("Width in twips"),
-  height: z.number().positive().describe("Height in twips")
-});
-var OutputFormatSchema = z.enum([
-  "pdf",
-  "docx",
-  "doc",
-  "odt",
-  "rtf",
-  "txt",
-  "html",
-  "xlsx",
-  "xls",
-  "ods",
-  "csv",
-  "pptx",
-  "ppt",
-  "odp",
-  "png",
-  "jpg",
-  "svg"
-]).describe("Output file format");
-var commonTools = {
-  // Document Structure
-  getStructure: {
-    name: "getStructure",
-    description: "Get the document structure including paragraphs, sheets, slides, or pages depending on document type. Returns an overview of the document content.",
-    parameters: z.object({
-      maxResponseChars: z.number().int().positive().optional().describe("Maximum characters to return (default: 8000). Use for large documents.")
-    }),
-    documentTypes: ["all"]
-  },
-  // Lifecycle
-  save: {
-    name: "save",
-    description: "Save changes to the document at its original path.",
-    parameters: z.object({}),
-    documentTypes: ["all"]
-  },
-  saveAs: {
-    name: "saveAs",
-    description: "Save the document to a new path with optional format conversion.",
-    parameters: z.object({
-      path: z.string().describe("Output file path"),
-      format: OutputFormatSchema
-    }),
-    documentTypes: ["all"]
-  },
-  close: {
-    name: "close",
-    description: "Close the document and release resources.",
-    parameters: z.object({}),
-    documentTypes: ["all"]
-  },
-  // History
-  undo: {
-    name: "undo",
-    description: "Undo the last edit operation.",
-    parameters: z.object({}),
-    documentTypes: ["all"]
-  },
-  redo: {
-    name: "redo",
-    description: "Redo the previously undone operation.",
-    parameters: z.object({}),
-    documentTypes: ["all"]
-  },
-  // Search
-  find: {
-    name: "find",
-    description: "Find text in the document. Returns match count and position of first match.",
-    parameters: z.object({
-      text: z.string().min(1).describe("Text to search for"),
-      caseSensitive: z.boolean().optional().describe("Match case exactly"),
-      wholeWord: z.boolean().optional().describe("Match whole words only")
-    }),
-    documentTypes: ["all"]
-  },
-  findAndReplaceAll: {
-    name: "findAndReplaceAll",
-    description: "Find all occurrences of text and replace them.",
-    parameters: z.object({
-      find: z.string().min(1).describe("Text to find"),
-      replace: z.string().describe("Replacement text"),
-      caseSensitive: z.boolean().optional().describe("Match case exactly"),
-      wholeWord: z.boolean().optional().describe("Match whole words only")
-    }),
-    documentTypes: ["all"]
-  },
-  // Selection
-  getSelection: {
-    name: "getSelection",
-    description: "Get the currently selected text or range.",
-    parameters: z.object({}),
-    documentTypes: ["all"]
-  },
-  clearSelection: {
-    name: "clearSelection",
-    description: "Clear the current selection.",
-    parameters: z.object({}),
-    documentTypes: ["all"]
-  },
-  // Edit mode
-  enableEditMode: {
-    name: "enableEditMode",
-    description: "Enable edit mode for the document. Required before making changes.",
-    parameters: z.object({}),
-    documentTypes: ["all"]
-  },
-  getEditMode: {
-    name: "getEditMode",
-    description: "Get the current edit mode (0 = view, 1 = edit).",
-    parameters: z.object({}),
-    documentTypes: ["all"]
-  }
-};
-var writerTools = {
-  getParagraph: {
-    name: "getParagraph",
-    description: "Get a single paragraph by its index. Use getStructure() first to see available paragraphs.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Zero-based paragraph index")
-    }),
-    documentTypes: ["writer"]
-  },
-  getParagraphs: {
-    name: "getParagraphs",
-    description: "Get a range of paragraphs. Useful for paginating through large documents.",
-    parameters: z.object({
-      start: z.number().int().min(0).describe("Starting paragraph index"),
-      count: z.number().int().positive().describe("Number of paragraphs to retrieve")
-    }),
-    documentTypes: ["writer"]
-  },
-  insertParagraph: {
-    name: "insertParagraph",
-    description: "Insert a new paragraph with optional styling.",
-    parameters: z.object({
-      text: z.string().describe("Paragraph text content"),
-      afterIndex: z.number().int().min(0).optional().describe("Insert after this paragraph index. Omit to append at end."),
-      style: z.enum(["Normal", "Heading 1", "Heading 2", "Heading 3", "List"]).optional().describe("Paragraph style to apply")
-    }),
-    documentTypes: ["writer"]
-  },
-  replaceParagraph: {
-    name: "replaceParagraph",
-    description: "Replace the entire content of a paragraph.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Paragraph index to replace"),
-      text: z.string().describe("New paragraph text")
-    }),
-    documentTypes: ["writer"]
-  },
-  deleteParagraph: {
-    name: "deleteParagraph",
-    description: "Delete a paragraph by index.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Paragraph index to delete")
-    }),
-    documentTypes: ["writer"]
-  },
-  insertText: {
-    name: "insertText",
-    description: "Insert text at a specific position within the document.",
-    parameters: z.object({
-      text: z.string().describe("Text to insert"),
-      position: TextPositionSchema.describe("Position to insert at")
-    }),
-    documentTypes: ["writer"]
-  },
-  deleteText: {
-    name: "deleteText",
-    description: "Delete text between two positions.",
-    parameters: z.object({
-      start: TextPositionSchema.describe("Start position"),
-      end: TextPositionSchema.describe("End position")
-    }),
-    documentTypes: ["writer"]
-  },
-  replaceText: {
-    name: "replaceText",
-    description: "Find and replace text within the document.",
-    parameters: z.object({
-      find: z.string().min(1).describe("Text to find"),
-      replace: z.string().describe("Replacement text"),
-      paragraph: z.number().int().min(0).optional().describe("Limit to specific paragraph"),
-      all: z.boolean().optional().describe("Replace all occurrences (default: false)")
-    }),
-    documentTypes: ["writer"]
-  },
-  formatText: {
-    name: "formatText",
-    description: "Apply formatting to a text range.",
-    parameters: z.object({
-      range: TextRangeSchema.describe("Text range to format"),
-      format: TextFormatSchema.describe("Formatting to apply")
-    }),
-    documentTypes: ["writer"]
-  },
-  getFormat: {
-    name: "getFormat",
-    description: "Get the text formatting at the current cursor position or selection.",
-    parameters: z.object({
-      position: TextPositionSchema.optional().describe("Position to check (uses current selection if omitted)")
-    }),
-    documentTypes: ["writer"]
-  }
-};
-var calcTools = {
-  getSheetNames: {
-    name: "getSheetNames",
-    description: "Get the names of all sheets in the workbook.",
-    parameters: z.object({}),
-    documentTypes: ["calc"]
-  },
-  getCell: {
-    name: "getCell",
-    description: "Get the value and formula of a single cell.",
-    parameters: z.object({
-      cell: CellRefSchema.describe('Cell reference (e.g., "A1" or {row: 0, col: 0})'),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index (uses active sheet if omitted)")
-    }),
-    documentTypes: ["calc"]
-  },
-  getCells: {
-    name: "getCells",
-    description: "Get values from a range of cells. Returns a 2D array.",
-    parameters: z.object({
-      range: RangeRefSchema.describe('Cell range (e.g., "A1:C10")'),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index"),
-      maxResponseChars: z.number().int().positive().optional().describe("Maximum response size. Use smaller ranges for large data.")
-    }),
-    documentTypes: ["calc"]
-  },
-  setCellValue: {
-    name: "setCellValue",
-    description: "Set the value of a single cell.",
-    parameters: z.object({
-      cell: CellRefSchema.describe("Cell reference"),
-      value: z.union([z.string(), z.number()]).describe("Value to set"),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index")
-    }),
-    documentTypes: ["calc"]
-  },
-  setCellFormula: {
-    name: "setCellFormula",
-    description: 'Set a formula in a cell. Formula should start with "=" (e.g., "=SUM(A1:A10)").',
-    parameters: z.object({
-      cell: CellRefSchema.describe("Cell reference"),
-      formula: z.string().describe('Formula starting with "="'),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index")
-    }),
-    documentTypes: ["calc"]
-  },
-  setCells: {
-    name: "setCells",
-    description: "Set values for multiple cells at once. Pass a 2D array of values.",
-    parameters: z.object({
-      range: RangeRefSchema.describe("Starting cell or range"),
-      values: z.array(z.array(CellValueSchema)).describe("2D array of values. Rows are outer array, columns are inner."),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index")
-    }),
-    documentTypes: ["calc"]
-  },
-  clearCell: {
-    name: "clearCell",
-    description: "Clear the contents of a cell.",
-    parameters: z.object({
-      cell: CellRefSchema.describe("Cell reference"),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index")
-    }),
-    documentTypes: ["calc"]
-  },
-  clearRange: {
-    name: "clearRange",
-    description: "Clear the contents of a range of cells.",
-    parameters: z.object({
-      range: RangeRefSchema.describe("Cell range to clear"),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index")
-    }),
-    documentTypes: ["calc"]
-  },
-  insertRow: {
-    name: "insertRow",
-    description: "Insert a new row after the specified row.",
-    parameters: z.object({
-      afterRow: z.number().int().min(0).describe("Insert after this row index (0-based)"),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index")
-    }),
-    documentTypes: ["calc"]
-  },
-  insertColumn: {
-    name: "insertColumn",
-    description: "Insert a new column after the specified column.",
-    parameters: z.object({
-      afterCol: z.union([
-        z.string().describe('Column letter (e.g., "A", "B", "AA")'),
-        z.number().int().min(0).describe("Column index (0-based)")
-      ]).describe("Insert after this column"),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index")
-    }),
-    documentTypes: ["calc"]
-  },
-  deleteRow: {
-    name: "deleteRow",
-    description: "Delete a row.",
-    parameters: z.object({
-      row: z.number().int().min(0).describe("Row index to delete"),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index")
-    }),
-    documentTypes: ["calc"]
-  },
-  deleteColumn: {
-    name: "deleteColumn",
-    description: "Delete a column.",
-    parameters: z.object({
-      col: z.union([
-        z.string().describe("Column letter"),
-        z.number().int().min(0).describe("Column index")
-      ]).describe("Column to delete"),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index")
-    }),
-    documentTypes: ["calc"]
-  },
-  formatCells: {
-    name: "formatCells",
-    description: "Apply formatting to a range of cells.",
-    parameters: z.object({
-      range: RangeRefSchema.describe("Cell range to format"),
-      format: CellFormatSchema.describe("Formatting to apply"),
-      sheet: SheetRefSchema.optional().describe("Sheet name or index")
-    }),
-    documentTypes: ["calc"]
-  },
-  addSheet: {
-    name: "addSheet",
-    description: "Add a new sheet to the workbook.",
-    parameters: z.object({
-      name: z.string().min(1).describe("Name for the new sheet")
-    }),
-    documentTypes: ["calc"]
-  },
-  renameSheet: {
-    name: "renameSheet",
-    description: "Rename an existing sheet.",
-    parameters: z.object({
-      sheet: SheetRefSchema.describe("Sheet to rename"),
-      newName: z.string().min(1).describe("New sheet name")
-    }),
-    documentTypes: ["calc"]
-  },
-  deleteSheet: {
-    name: "deleteSheet",
-    description: "Delete a sheet from the workbook.",
-    parameters: z.object({
-      sheet: SheetRefSchema.describe("Sheet to delete")
-    }),
-    documentTypes: ["calc"]
-  }
-};
-var impressTools = {
-  getSlide: {
-    name: "getSlide",
-    description: "Get detailed content of a specific slide including title and text frames.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Zero-based slide index")
-    }),
-    documentTypes: ["impress"]
-  },
-  getSlideCount: {
-    name: "getSlideCount",
-    description: "Get the total number of slides in the presentation.",
-    parameters: z.object({}),
-    documentTypes: ["impress"]
-  },
-  addSlide: {
-    name: "addSlide",
-    description: "Add a new slide to the presentation.",
-    parameters: z.object({
-      afterSlide: z.number().int().min(0).optional().describe("Insert after this slide index. Omit to append at end."),
-      layout: SlideLayoutSchema.optional().describe("Slide layout to use")
-    }),
-    documentTypes: ["impress"]
-  },
-  deleteSlide: {
-    name: "deleteSlide",
-    description: "Delete a slide from the presentation. Cannot delete the last slide.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index to delete")
-    }),
-    documentTypes: ["impress"]
-  },
-  duplicateSlide: {
-    name: "duplicateSlide",
-    description: "Create a copy of a slide. The copy is inserted after the original.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index to duplicate")
-    }),
-    documentTypes: ["impress"]
-  },
-  moveSlide: {
-    name: "moveSlide",
-    description: "Move a slide to a different position.",
-    parameters: z.object({
-      fromIndex: z.number().int().min(0).describe("Current slide index"),
-      toIndex: z.number().int().min(0).describe("Target position index")
-    }),
-    documentTypes: ["impress"]
-  },
-  setSlideTitle: {
-    name: "setSlideTitle",
-    description: "Set or replace the title text of a slide.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index"),
-      title: z.string().describe("New title text")
-    }),
-    documentTypes: ["impress"]
-  },
-  setSlideBody: {
-    name: "setSlideBody",
-    description: "Set or replace the body text of a slide.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index"),
-      body: z.string().describe("New body text")
-    }),
-    documentTypes: ["impress"]
-  },
-  setSlideNotes: {
-    name: "setSlideNotes",
-    description: "Set speaker notes for a slide.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index"),
-      notes: z.string().describe("Speaker notes text")
-    }),
-    documentTypes: ["impress"]
-  },
-  setSlideLayout: {
-    name: "setSlideLayout",
-    description: "Change the layout of a slide.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index"),
-      layout: SlideLayoutSchema.describe("New layout to apply")
-    }),
-    documentTypes: ["impress"]
-  }
-};
-var drawTools = {
-  getPage: {
-    name: "getPage",
-    description: "Get detailed content of a specific page including shapes.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Zero-based page index")
-    }),
-    documentTypes: ["draw"]
-  },
-  getPageCount: {
-    name: "getPageCount",
-    description: "Get the total number of pages in the document.",
-    parameters: z.object({}),
-    documentTypes: ["draw"]
-  },
-  addPage: {
-    name: "addPage",
-    description: "Add a new page to the document.",
-    parameters: z.object({
-      afterPage: z.number().int().min(0).optional().describe("Insert after this page index. Omit to append at end.")
-    }),
-    documentTypes: ["draw"]
-  },
-  deletePage: {
-    name: "deletePage",
-    description: "Delete a page from the document. Cannot delete the last page.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Page index to delete")
-    }),
-    documentTypes: ["draw"]
-  },
-  duplicatePage: {
-    name: "duplicatePage",
-    description: "Create a copy of a page. The copy is inserted after the original.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Page index to duplicate")
-    }),
-    documentTypes: ["draw"]
-  },
-  addShape: {
-    name: "addShape",
-    description: "Add a shape to a page.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
-      shapeType: ShapeTypeSchema.describe("Type of shape to create"),
-      bounds: RectangleSchema.describe("Position and size of the shape"),
-      text: z.string().optional().describe("Text content for the shape"),
-      fillColor: z.string().optional().describe('Fill color as hex (e.g., "#FF0000")'),
-      lineColor: z.string().optional().describe("Line/stroke color as hex")
-    }),
-    documentTypes: ["draw"]
-  },
-  addLine: {
-    name: "addLine",
-    description: "Add a line to a page.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
-      start: PositionSchema.describe("Start point of the line"),
-      end: PositionSchema.describe("End point of the line"),
-      lineColor: z.string().optional().describe("Line color as hex"),
-      lineWidth: z.number().positive().optional().describe("Line width in twips")
-    }),
-    documentTypes: ["draw"]
-  },
-  deleteShape: {
-    name: "deleteShape",
-    description: "Delete a shape from a page.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
-      shapeIndex: z.number().int().min(0).describe("Shape index on the page")
-    }),
-    documentTypes: ["draw"]
-  },
-  setShapeText: {
-    name: "setShapeText",
-    description: "Set or replace the text content of a shape.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
-      shapeIndex: z.number().int().min(0).describe("Shape index"),
-      text: z.string().describe("New text content")
-    }),
-    documentTypes: ["draw"]
-  },
-  moveShape: {
-    name: "moveShape",
-    description: "Move a shape to a new position.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
-      shapeIndex: z.number().int().min(0).describe("Shape index"),
-      position: PositionSchema.describe("New position")
-    }),
-    documentTypes: ["draw"]
-  },
-  resizeShape: {
-    name: "resizeShape",
-    description: "Resize a shape.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
-      shapeIndex: z.number().int().min(0).describe("Shape index"),
-      size: SizeSchema.describe("New size")
-    }),
-    documentTypes: ["draw"]
-  }
-};
-var documentTools = {
-  convertDocument: {
-    name: "convertDocument",
-    description: "Convert the entire document to a different format. Returns the converted document as binary data. Use this for format conversions like DOCX to PDF, XLSX to CSV, PPTX to PDF, etc.",
-    parameters: z.object({
-      outputFormat: OutputFormatSchema.describe("Target format for conversion"),
-      options: z.object({
-        pdfVersion: z.enum(["PDF/A-1b", "PDF/A-2b", "PDF/A-3b"]).optional().describe("PDF/A compliance level for PDF output"),
-        quality: z.number().min(1).max(100).optional().describe("Quality for image formats (1-100)")
-      }).optional().describe("Format-specific conversion options")
-    }),
-    documentTypes: ["all"]
-  },
-  renderPageToImage: {
-    name: "renderPageToImage",
-    description: "Render a specific page/slide to an image (PNG, JPG, or WebP). Useful for generating thumbnails, previews, or extracting visual content from documents.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Zero-based page/slide index to render"),
-      format: z.enum(["png", "jpg", "webp"]).default("png").describe("Output image format"),
-      width: z.number().int().min(1).max(4096).default(1024).describe("Output image width in pixels"),
-      height: z.number().int().min(0).max(4096).default(0).describe("Output image height in pixels (0 = auto based on aspect ratio)"),
-      quality: z.number().min(1).max(100).default(90).describe("Quality for JPG/WebP (1-100)")
-    }),
-    documentTypes: ["all"]
-  },
-  getPageCount: {
-    name: "getPageCount",
-    description: "Get the total number of pages, slides, or sheets in the document. For Writer documents, returns page count. For Calc, returns sheet count. For Impress/Draw, returns slide/page count.",
-    parameters: z.object({}),
-    documentTypes: ["all"]
-  },
-  exportPageToPdf: {
-    name: "exportPageToPdf",
-    description: "Export a specific page or range of pages to PDF. Useful for extracting a subset of pages from a larger document.",
-    parameters: z.object({
-      startPage: z.number().int().min(0).describe("Starting page index (0-based)"),
-      endPage: z.number().int().min(0).optional().describe("Ending page index (0-based, inclusive). If omitted, exports only startPage."),
-      options: z.object({
-        pdfVersion: z.enum(["PDF/A-1b", "PDF/A-2b", "PDF/A-3b"]).optional().describe("PDF/A compliance level")
-      }).optional()
-    }),
-    documentTypes: ["all"]
-  },
-  getDocumentMetadata: {
-    name: "getDocumentMetadata",
-    description: "Get document metadata including title, author, creation date, modification date, page count, and document type.",
-    parameters: z.object({}),
-    documentTypes: ["all"]
-  },
-  setDocumentMetadata: {
-    name: "setDocumentMetadata",
-    description: "Set document metadata such as title, author, subject, and keywords.",
-    parameters: z.object({
-      title: z.string().optional().describe("Document title"),
-      author: z.string().optional().describe("Document author"),
-      subject: z.string().optional().describe("Document subject"),
-      keywords: z.array(z.string()).optional().describe("Document keywords for search/categorization")
-    }),
-    documentTypes: ["all"]
-  },
-  exportToHtml: {
-    name: "exportToHtml",
-    description: "Export the document to HTML format. Useful for web publishing or extracting formatted content.",
-    parameters: z.object({
-      includeImages: z.boolean().default(true).describe("Whether to embed images in the HTML"),
-      inlineStyles: z.boolean().default(true).describe("Whether to use inline CSS styles")
-    }),
-    documentTypes: ["all"]
-  },
-  extractText: {
-    name: "extractText",
-    description: "Extract all text content from the document as plain text. Useful for indexing, searching, or text analysis.",
-    parameters: z.object({
-      preserveFormatting: z.boolean().default(false).describe("Attempt to preserve basic formatting like paragraphs and lists"),
-      pageRange: z.object({
-        start: z.number().int().min(0).describe("Start page (0-based)"),
-        end: z.number().int().min(0).describe("End page (0-based, inclusive)")
-      }).optional().describe("Extract text from specific page range only")
-    }),
-    documentTypes: ["all"]
-  },
-  printDocument: {
-    name: "printDocument",
-    description: "Generate print-ready output. Configures the document for printing with specified settings.",
-    parameters: z.object({
-      copies: z.number().int().min(1).max(999).default(1).describe("Number of copies"),
-      pageRange: z.string().optional().describe('Page range to print (e.g., "1-5", "1,3,5", "all")'),
-      orientation: z.enum(["portrait", "landscape"]).optional().describe("Page orientation"),
-      paperSize: z.enum(["letter", "a4", "legal", "a3", "a5"]).optional().describe("Paper size")
-    }),
-    documentTypes: ["all"]
-  }
-};
-var allTools = {
-  common: commonTools,
-  writer: writerTools,
-  calc: calcTools,
-  impress: impressTools,
-  draw: drawTools,
-  document: documentTools
-};
-var toolsByName = {
-  ...commonTools,
-  ...writerTools,
-  ...calcTools,
-  ...impressTools,
-  ...drawTools,
-  ...documentTools
-};
-function getToolsForDocumentType(docType) {
-  const tools = [];
-  for (const tool of Object.values(commonTools)) {
-    tools.push(tool);
-  }
-  for (const tool of Object.values(documentTools)) {
-    tools.push(tool);
-  }
-  const typeTools = {
-    writer: writerTools,
-    calc: calcTools,
-    impress: impressTools,
-    draw: drawTools
-  }[docType];
-  for (const tool of Object.values(typeTools)) {
-    tools.push(tool);
-  }
-  return tools;
-}
-function zodToJsonSchema(schema) {
-  const jsonSchema = z.toJSONSchema(schema, { target: "draft-7" });
-  const { $schema: _schema, ...rest } = jsonSchema;
-  return rest;
-}
-function toOpenAIFunction(tool) {
-  return {
-    name: tool.name,
-    description: tool.description,
-    parameters: zodToJsonSchema(tool.parameters)
-  };
-}
-function toAnthropicTool(tool) {
-  return {
-    name: tool.name,
-    description: tool.description,
-    input_schema: zodToJsonSchema(tool.parameters)
-  };
-}
-function getOpenAIFunctions(docType) {
-  return getToolsForDocumentType(docType).map(toOpenAIFunction);
-}
-function getAnthropicTools(docType) {
-  return getToolsForDocumentType(docType).map(toAnthropicTool);
-}
 
 // src/editor/index.ts
-var LOK_DOCTYPE_TEXT2 = 0;
-var LOK_DOCTYPE_SPREADSHEET2 = 1;
-var LOK_DOCTYPE_PRESENTATION2 = 2;
-var LOK_DOCTYPE_DRAWING2 = 3;
+var LOK_DOCTYPE_TEXT = 0;
+var LOK_DOCTYPE_SPREADSHEET = 1;
+var LOK_DOCTYPE_PRESENTATION = 2;
+var LOK_DOCTYPE_DRAWING = 3;
 function createEditor(lok, docPtr, options) {
   const docType = lok.documentGetDocumentType(docPtr);
   switch (docType) {
-    case LOK_DOCTYPE_TEXT2:
+    case LOK_DOCTYPE_TEXT:
       return new WriterEditor(lok, docPtr, options);
-    case LOK_DOCTYPE_SPREADSHEET2:
+    case LOK_DOCTYPE_SPREADSHEET:
       return new CalcEditor(lok, docPtr, options);
-    case LOK_DOCTYPE_PRESENTATION2:
+    case LOK_DOCTYPE_PRESENTATION:
       return new ImpressEditor(lok, docPtr, options);
-    case LOK_DOCTYPE_DRAWING2:
+    case LOK_DOCTYPE_DRAWING:
       return new DrawEditor(lok, docPtr, options);
     default:
       throw new Error(`Unsupported document type: ${docType}`);
   }
 }
-function isWriterEditor(editor) {
-  return editor.getDocumentType() === "writer";
-}
-function isCalcEditor(editor) {
-  return editor.getDocumentType() === "calc";
-}
-function isImpressEditor(editor) {
-  return editor.getDocumentType() === "impress";
-}
-function isDrawEditor(editor) {
-  return editor.getDocumentType() === "draw";
-}
 
-// src/index.ts
-var isNode = typeof process !== "undefined" && process.versions != null && process.versions.node != null;
-async function createConverter(options) {
-  const converter = new LibreOfficeConverter(options);
+// src/node.worker.ts
+var wasmLoader = __require("../wasm/loader.cjs");
+var converter = null;
+var editorSessions = /* @__PURE__ */ new Map();
+var sessionCounter = 0;
+async function handleInit(payload) {
+  if (converter?.isReady()) {
+    return;
+  }
+  converter = new LibreOfficeConverter({
+    wasmPath: payload.wasmPath,
+    verbose: payload.verbose,
+    wasmLoader
+  });
   await converter.initialize();
-  return converter;
 }
-async function convertDocument(input, options, converterOptions) {
-  const isBasicConversion = !options.image;
-  if (isNode && isBasicConversion) {
-    const converter2 = await createSubprocessConverter(converterOptions);
+async function handleConvert(payload) {
+  if (!converter?.isReady()) {
+    throw new Error("Worker not initialized");
+  }
+  const options = {
+    inputFormat: payload.inputFormat,
+    outputFormat: payload.outputFormat
+  };
+  const result = await converter.convert(
+    payload.inputData,
+    options,
+    payload.filename || "document"
+  );
+  return result.data;
+}
+async function handleGetPageCount(payload) {
+  if (!converter?.isReady()) {
+    throw new Error("Worker not initialized");
+  }
+  const options = {
+    inputFormat: payload.inputFormat,
+    outputFormat: "pdf"
+    // Required but not used for page count
+  };
+  return converter.getPageCount(payload.inputData, options);
+}
+async function handleGetDocumentInfo(payload) {
+  if (!converter?.isReady()) {
+    throw new Error("Worker not initialized");
+  }
+  const options = {
+    inputFormat: payload.inputFormat,
+    outputFormat: "pdf"
+    // Required but not used for document info
+  };
+  return converter.getDocumentInfo(payload.inputData, options);
+}
+async function handleRenderPage(payload) {
+  if (!converter?.isReady()) {
+    throw new Error("Worker not initialized");
+  }
+  const previews = await converter.renderPagePreviews(
+    payload.inputData,
+    { inputFormat: payload.inputFormat },
+    {
+      width: payload.width,
+      height: payload.height,
+      pageIndices: [payload.pageIndex]
+    }
+  );
+  if (previews.length === 0) {
+    throw new Error(`Page ${payload.pageIndex} not found`);
+  }
+  const preview = previews[0];
+  return {
+    data: preview.data,
+    width: preview.width,
+    height: preview.height
+  };
+}
+async function handleRenderPagePreviews(payload) {
+  if (!converter?.isReady()) {
+    throw new Error("Worker not initialized");
+  }
+  return converter.renderPagePreviews(
+    payload.inputData,
+    { inputFormat: payload.inputFormat },
+    {
+      width: payload.width,
+      height: payload.height,
+      pageIndices: payload.pageIndices
+    }
+  );
+}
+async function handleRenderPageFullQuality(payload) {
+  if (!converter?.isReady()) {
+    throw new Error("Worker not initialized");
+  }
+  return converter.renderPageFullQuality(
+    payload.inputData,
+    { inputFormat: payload.inputFormat },
+    payload.pageIndex,
+    {
+      dpi: payload.dpi,
+      maxDimension: payload.maxDimension,
+      editMode: payload.editMode ?? false
+    }
+  );
+}
+async function handleGetDocumentText(payload) {
+  if (!converter?.isReady()) {
+    throw new Error("Worker not initialized");
+  }
+  const options = {
+    inputFormat: payload.inputFormat,
+    outputFormat: "pdf"
+    // Required but not used for text extraction
+  };
+  return converter.getDocumentText(payload.inputData, options);
+}
+async function handleGetPageNames(payload) {
+  if (!converter?.isReady()) {
+    throw new Error("Worker not initialized");
+  }
+  const options = {
+    inputFormat: payload.inputFormat,
+    outputFormat: "pdf"
+    // Required but not used for page names
+  };
+  return converter.getPageNames(payload.inputData, options);
+}
+async function handleOpenDocument(payload) {
+  if (!converter?.isReady()) {
+    throw new Error("Worker not initialized");
+  }
+  const lokBindings = converter.getLokBindings();
+  const module = converter.getModule();
+  if (!lokBindings || !module) {
+    throw new Error("LOK bindings not available");
+  }
+  const sessionId = `session_${++sessionCounter}_${Date.now()}`;
+  const filePath = `/tmp/edit_${sessionId}.${payload.inputFormat}`;
+  module.FS.writeFile(filePath, payload.inputData);
+  const loadOptions = buildLoadOptions(payload.inputFormat);
+  let docPtr;
+  if (loadOptions) {
+    docPtr = lokBindings.documentLoadWithOptions(filePath, loadOptions);
+  } else {
+    docPtr = lokBindings.documentLoad(filePath);
+  }
+  if (docPtr === 0) {
+    const error = lokBindings.getError();
+    module.FS.unlink(filePath);
+    throw new Error(`Failed to load document: ${String(error)}`);
+  }
+  lokBindings.documentInitializeForRendering(docPtr);
+  const viewId = lokBindings.createView(docPtr);
+  lokBindings.setView(docPtr, viewId);
+  lokBindings.registerCallback(docPtr);
+  lokBindings.postUnoCommand(docPtr, ".uno:Edit");
+  const editor = createEditor(lokBindings, docPtr);
+  const documentType = editor.getDocumentType();
+  const pageCount = lokBindings.documentGetParts(docPtr);
+  editorSessions.set(sessionId, {
+    sessionId,
+    docPtr,
+    filePath,
+    editor,
+    documentType
+  });
+  return {
+    sessionId,
+    documentType,
+    pageCount
+  };
+}
+async function handleEditorOperation(payload) {
+  const session = editorSessions.get(payload.sessionId);
+  if (!session) {
+    throw new Error(`Session not found: ${payload.sessionId}`);
+  }
+  const { editor } = session;
+  const args = payload.args || [];
+  const method = editor[payload.method];
+  if (typeof method !== "function") {
+    throw new Error(`Unknown editor method: ${payload.method}`);
+  }
+  const result = method.apply(editor, args);
+  let serializedData = result.data;
+  if (result.data instanceof Map) {
+    serializedData = Object.fromEntries(result.data);
+  }
+  return {
+    success: result.success,
+    verified: result.verified,
+    data: serializedData,
+    error: result.error,
+    suggestion: result.suggestion
+  };
+}
+async function handleCloseDocument(payload) {
+  const session = editorSessions.get(payload.sessionId);
+  if (!session) {
+    throw new Error(`Session not found: ${payload.sessionId}`);
+  }
+  const lokBindings = converter?.getLokBindings();
+  const module = converter?.getModule();
+  const { docPtr, filePath } = session;
+  let modifiedData;
+  if (module && lokBindings) {
     try {
-      return await converter2.convert(input, options);
-    } finally {
-      await converter2.destroy();
+      const ext = filePath.split(".").pop() || "docx";
+      lokBindings.documentSaveAs(docPtr, filePath, ext, "");
+      modifiedData = module.FS.readFile(filePath);
+    } catch (e) {
+      console.warn("[Worker] Could not save document:", e);
     }
   }
-  const converter = await createConverter(converterOptions);
-  try {
-    return await converter.convert(input, options);
-  } finally {
-    await converter.destroy();
-  }
-}
-async function exportAsImage(input, pages, format = "png", imageOptions, converterOptions) {
-  const pageArray = Array.isArray(pages) ? pages : [pages];
-  if (pageArray.length === 0) {
-    throw new Error("pages is required and must not be empty");
-  }
-  const converter = await createConverter(converterOptions);
-  try {
-    const results = [];
-    for (const pageIndex of pageArray) {
-      const result = await converter.convert(input, {
-        outputFormat: format,
-        image: { ...imageOptions, pageIndex }
-      });
-      results.push(result);
+  if (lokBindings && docPtr !== 0) {
+    try {
+      lokBindings.unregisterCallback(docPtr);
+    } catch {
     }
-    return results;
-  } finally {
+    try {
+      lokBindings.documentDestroy(docPtr);
+    } catch {
+    }
+  }
+  if (module) {
+    try {
+      module.FS.unlink(filePath);
+    } catch {
+    }
+  }
+  editorSessions.delete(payload.sessionId);
+  return modifiedData;
+}
+async function handleDestroy() {
+  for (const [, session] of editorSessions) {
+    try {
+      const lokBindings = converter?.getLokBindings();
+      const module = converter?.getModule();
+      if (lokBindings && session.docPtr !== 0) {
+        try {
+          lokBindings.unregisterCallback(session.docPtr);
+        } catch {
+        }
+        try {
+          lokBindings.documentDestroy(session.docPtr);
+        } catch {
+        }
+      }
+      if (module) {
+        try {
+          module.FS.unlink(session.filePath);
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  editorSessions.clear();
+  if (converter) {
     await converter.destroy();
+    converter = null;
   }
 }
-function isInputFormatSupported(format) {
-  return LibreOfficeConverter.getSupportedInputFormats().includes(format.toLowerCase());
-}
-function isOutputFormatSupported(format) {
-  return LibreOfficeConverter.getSupportedOutputFormats().includes(format.toLowerCase());
-}
-function isConversionSupported(inputFormat, outputFormat) {
-  return LibreOfficeConverter.isConversionSupported(inputFormat, outputFormat);
-}
-function getValidOutputFormatsFor(inputFormat) {
-  return LibreOfficeConverter.getValidOutputFormats(inputFormat);
-}
-
-export { CATEGORY_OUTPUT_FORMATS, CalcEditor, ConversionError, ConversionErrorCode, DEFAULT_WASM_BASE_URL, DrawEditor, EXTENSION_TO_FORMAT, FORMAT_FILTERS, FORMAT_MIME_TYPES, INPUT_FORMAT_CATEGORY, ImpressEditor, LOKDocumentType, LOK_DOCTYPE_DRAWING, LOK_DOCTYPE_OTHER, LOK_DOCTYPE_OUTPUT_FORMATS, LOK_DOCTYPE_PRESENTATION, LOK_DOCTYPE_SPREADSHEET, LOK_DOCTYPE_TEXT, LOK_KEYEVENT_KEYINPUT, LOK_KEYEVENT_KEYUP, LOK_MOUSEEVENT_BUTTONDOWN, LOK_MOUSEEVENT_BUTTONUP, LOK_MOUSEEVENT_MOVE, LOK_SELTYPE_CELL, LOK_SELTYPE_NONE, LOK_SELTYPE_TEXT, LOK_SETTEXTSELECTION_END, LOK_SETTEXTSELECTION_RESET, LOK_SETTEXTSELECTION_START, LibreOfficeConverter, OfficeEditor, SubprocessConverter, WorkerConverter, WriterEditor, allTools, calcTools, commonTools, convertDocument, createConverter, createEditor, createSubprocessConverter, createWasmPaths, createWorkerConverter, documentTools, drawTools, encodeImage, exportAsImage, getAnthropicTools, getConversionErrorMessage, getOpenAIFunctions, getOutputFormatsForDocType, getSharp, getToolsForDocumentType, getValidOutputFormats, getValidOutputFormatsFor, impressTools, isCalcEditor, isConversionSupported, isConversionValid, isDrawEditor, isImpressEditor, isInputFormatSupported, isOutputFormatSupported, isSharpAvailable, isWriterEditor, rgbaToJpeg, rgbaToPng, rgbaToWebp, toAnthropicTool, toOpenAIFunction, toolsByName, writerTools };
-//# sourceMappingURL=index.js.map
-//# sourceMappingURL=index.js.map
+worker_threads.parentPort?.on("message", async (message) => {
+  try {
+    let result;
+    switch (message.type) {
+      case "init":
+        await handleInit(message.payload);
+        break;
+      case "convert":
+        result = await handleConvert(message.payload);
+        break;
+      case "getPageCount":
+        result = await handleGetPageCount(message.payload);
+        break;
+      case "getDocumentInfo":
+        result = await handleGetDocumentInfo(message.payload);
+        break;
+      case "renderPage":
+        result = await handleRenderPage(message.payload);
+        break;
+      case "renderPagePreviews":
+        result = await handleRenderPagePreviews(message.payload);
+        break;
+      case "renderPageFullQuality":
+        result = await handleRenderPageFullQuality(message.payload);
+        break;
+      case "getDocumentText":
+        result = await handleGetDocumentText(message.payload);
+        break;
+      case "getPageNames":
+        result = await handleGetPageNames(message.payload);
+        break;
+      case "openDocument":
+        result = await handleOpenDocument(message.payload);
+        break;
+      case "editorOperation":
+        result = await handleEditorOperation(message.payload);
+        break;
+      case "closeDocument":
+        result = await handleCloseDocument(message.payload);
+        break;
+      case "destroy":
+        await handleDestroy();
+        break;
+      default:
+        throw new Error(`Unknown message type: ${message.type}`);
+    }
+    worker_threads.parentPort?.postMessage({
+      id: message.id,
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    worker_threads.parentPort?.postMessage({
+      id: message.id,
+      success: false,
+      error: error.message
+    });
+  }
+});
+worker_threads.parentPort?.postMessage({ type: "ready" });
+//# sourceMappingURL=node.worker.cjs.map
+//# sourceMappingURL=node.worker.cjs.map

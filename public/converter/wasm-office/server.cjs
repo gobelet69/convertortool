@@ -1,12 +1,15 @@
-import { Worker } from 'worker_threads';
-import { fileURLToPath } from 'url';
-import { resolve, dirname, join } from 'path';
-import { randomUUID } from 'crypto';
-import { existsSync } from 'fs';
-import { fork } from 'child_process';
-import { deflateSync } from 'zlib';
-import { z } from 'zod';
+'use strict';
 
+var worker_threads = require('worker_threads');
+var url = require('url');
+var path = require('path');
+var crypto = require('crypto');
+var fs = require('fs');
+var child_process = require('child_process');
+var zlib = require('zlib');
+var zod = require('zod');
+
+var _documentCurrentScript = typeof document !== 'undefined' ? document.currentScript : null;
 // src/types.ts
 var DEFAULT_WASM_BASE_URL = "/wasm/";
 function createWasmPaths(baseUrl = DEFAULT_WASM_BASE_URL) {
@@ -2715,22 +2718,22 @@ var WorkerConverter = class {
     try {
       let workerPath;
       if (this.options.workerPath) {
-        workerPath = resolve(this.options.workerPath);
+        workerPath = path.resolve(this.options.workerPath);
       } else {
         try {
-          const currentDir = dirname(fileURLToPath(import.meta.url));
-          workerPath = join(currentDir, "node.worker.cjs");
+          const currentDir = path.dirname(url.fileURLToPath((typeof document === 'undefined' ? require('u' + 'rl').pathToFileURL(__filename).href : (_documentCurrentScript && _documentCurrentScript.tagName.toUpperCase() === 'SCRIPT' && _documentCurrentScript.src || new URL('server.cjs', document.baseURI).href))));
+          workerPath = path.join(currentDir, "node.worker.cjs");
         } catch {
-          workerPath = join(__dirname, "node.worker.cjs");
+          workerPath = path.join(__dirname, "node.worker.cjs");
         }
-        if (!existsSync(workerPath)) {
-          const distWorkerPath = resolve(process.cwd(), "dist", "node.worker.cjs");
-          if (existsSync(distWorkerPath)) {
+        if (!fs.existsSync(workerPath)) {
+          const distWorkerPath = path.resolve(process.cwd(), "dist", "node.worker.cjs");
+          if (fs.existsSync(distWorkerPath)) {
             workerPath = distWorkerPath;
           }
         }
       }
-      this.worker = new Worker(workerPath);
+      this.worker = new worker_threads.Worker(workerPath);
       this.worker.on("message", (response) => {
         if ("type" in response && response.type === "ready") {
           return;
@@ -2795,7 +2798,7 @@ var WorkerConverter = class {
         ));
         return;
       }
-      const id = randomUUID();
+      const id = crypto.randomUUID();
       const timeout = setTimeout(() => {
         const pending = this.pending.get(id);
         if (pending) {
@@ -3114,18 +3117,18 @@ var SubprocessConverter = class {
   async spawnWorker() {
     if (!this.workerPath) {
       try {
-        const currentDir = dirname(fileURLToPath(import.meta.url));
+        const currentDir = path.dirname(url.fileURLToPath((typeof document === 'undefined' ? require('u' + 'rl').pathToFileURL(__filename).href : (_documentCurrentScript && _documentCurrentScript.tagName.toUpperCase() === 'SCRIPT' && _documentCurrentScript.src || new URL('server.cjs', document.baseURI).href))));
         if (currentDir.endsWith("/src") || currentDir.endsWith("\\src")) {
-          this.workerPath = join(currentDir, "..", "dist", "subprocess.worker.cjs");
+          this.workerPath = path.join(currentDir, "..", "dist", "subprocess.worker.cjs");
         } else {
-          this.workerPath = join(currentDir, "subprocess.worker.cjs");
+          this.workerPath = path.join(currentDir, "subprocess.worker.cjs");
         }
       } catch {
-        this.workerPath = join(__dirname, "subprocess.worker.cjs");
+        this.workerPath = path.join(__dirname, "subprocess.worker.cjs");
       }
     }
-    const wasmPath = resolve(this.options.wasmPath || "./wasm");
-    this.child = fork(this.workerPath, [], {
+    const wasmPath = path.resolve(this.options.wasmPath || "./wasm");
+    this.child = child_process.fork(this.workerPath, [], {
       env: { ...process.env, WASM_PATH: wasmPath, VERBOSE: String(this.options.verbose || false) },
       stdio: ["pipe", "pipe", "pipe", "ipc"]
     });
@@ -3223,7 +3226,7 @@ var SubprocessConverter = class {
         reject(new ConversionError("WASM_NOT_INITIALIZED" /* WASM_NOT_INITIALIZED */, "No process"));
         return;
       }
-      const id = randomUUID();
+      const id = crypto.randomUUID();
       this.pending.set(id, { resolve: resolve3, reject });
       this.child.send({ type, id, payload });
       setTimeout(() => {
@@ -3621,7 +3624,7 @@ function encodePngFallback(rgbaData, width, height) {
       rawData[dstOffset + 3] = rgbaData[srcOffset + 3] ?? 0;
     }
   }
-  const compressed = deflateSync(rawData);
+  const compressed = zlib.deflateSync(rawData);
   const idatChunk = createChunk("IDAT", compressed);
   const iendChunk = createChunk("IEND", Buffer.alloc(0));
   return Buffer.concat([signature, ihdrChunk, idatChunk, iendChunk]);
@@ -5235,69 +5238,69 @@ var DrawEditor = class extends OfficeEditor {
     return parseInt(hex.replace("#", ""), 16);
   }
 };
-var TextPositionSchema = z.object({
-  paragraph: z.number().int().min(0).describe("Zero-based paragraph index"),
-  character: z.number().int().min(0).describe("Zero-based character offset within the paragraph")
+var TextPositionSchema = zod.z.object({
+  paragraph: zod.z.number().int().min(0).describe("Zero-based paragraph index"),
+  character: zod.z.number().int().min(0).describe("Zero-based character offset within the paragraph")
 });
-var TextRangeSchema = z.object({
+var TextRangeSchema = zod.z.object({
   start: TextPositionSchema.describe("Start position of the range"),
   end: TextPositionSchema.describe("End position of the range")
 });
-var TextFormatSchema = z.object({
-  bold: z.boolean().optional().describe("Apply bold formatting"),
-  italic: z.boolean().optional().describe("Apply italic formatting"),
-  underline: z.boolean().optional().describe("Apply underline formatting"),
-  fontSize: z.number().positive().optional().describe("Font size in points"),
-  fontName: z.string().optional().describe('Font family name (e.g., "Arial", "Times New Roman")'),
-  color: z.string().optional().describe('Text color as hex string (e.g., "#FF0000")')
+var TextFormatSchema = zod.z.object({
+  bold: zod.z.boolean().optional().describe("Apply bold formatting"),
+  italic: zod.z.boolean().optional().describe("Apply italic formatting"),
+  underline: zod.z.boolean().optional().describe("Apply underline formatting"),
+  fontSize: zod.z.number().positive().optional().describe("Font size in points"),
+  fontName: zod.z.string().optional().describe('Font family name (e.g., "Arial", "Times New Roman")'),
+  color: zod.z.string().optional().describe('Text color as hex string (e.g., "#FF0000")')
 });
-var CellRefSchema = z.union([
-  z.string().describe('A1-style cell reference (e.g., "A1", "B5", "AA100")'),
-  z.object({
-    row: z.number().int().min(0).describe("Zero-based row index"),
-    col: z.number().int().min(0).describe("Zero-based column index")
+var CellRefSchema = zod.z.union([
+  zod.z.string().describe('A1-style cell reference (e.g., "A1", "B5", "AA100")'),
+  zod.z.object({
+    row: zod.z.number().int().min(0).describe("Zero-based row index"),
+    col: zod.z.number().int().min(0).describe("Zero-based column index")
   })
 ]);
-var RangeRefSchema = z.union([
-  z.string().describe('A1-style range (e.g., "A1:B10", "C5:D20")'),
-  z.object({
+var RangeRefSchema = zod.z.union([
+  zod.z.string().describe('A1-style range (e.g., "A1:B10", "C5:D20")'),
+  zod.z.object({
     start: CellRefSchema.describe("Start cell of the range"),
     end: CellRefSchema.describe("End cell of the range")
   })
 ]);
-var SheetRefSchema = z.union([
-  z.string().describe("Sheet name"),
-  z.number().int().min(0).describe("Zero-based sheet index")
+var SheetRefSchema = zod.z.union([
+  zod.z.string().describe("Sheet name"),
+  zod.z.number().int().min(0).describe("Zero-based sheet index")
 ]);
-var CellValueSchema = z.union([
-  z.string(),
-  z.number(),
-  z.boolean(),
-  z.null()
+var CellValueSchema = zod.z.union([
+  zod.z.string(),
+  zod.z.number(),
+  zod.z.boolean(),
+  zod.z.null()
 ]).describe("Cell value: string, number, boolean, or null");
-var CellFormatSchema = z.object({
-  bold: z.boolean().optional().describe("Apply bold formatting"),
-  numberFormat: z.string().optional().describe('Number format string (e.g., "#,##0.00", "0%")'),
-  backgroundColor: z.string().optional().describe("Background color as hex string"),
-  textColor: z.string().optional().describe("Text color as hex string")
+var CellFormatSchema = zod.z.object({
+  bold: zod.z.boolean().optional().describe("Apply bold formatting"),
+  numberFormat: zod.z.string().optional().describe('Number format string (e.g., "#,##0.00", "0%")'),
+  backgroundColor: zod.z.string().optional().describe("Background color as hex string"),
+  textColor: zod.z.string().optional().describe("Text color as hex string")
 });
-var SlideLayoutSchema = z.enum(["blank", "title", "titleContent", "twoColumn"]).describe("Slide layout type");
-var ShapeTypeSchema = z.enum(["rectangle", "ellipse", "line", "text", "image", "group", "other"]).describe("Type of shape to create");
-var RectangleSchema = z.object({
-  x: z.number().describe("X position in twips"),
-  y: z.number().describe("Y position in twips"),
-  width: z.number().positive().describe("Width in twips"),
-  height: z.number().positive().describe("Height in twips")
+var SlideLayoutSchema = zod.z.enum(["blank", "title", "titleContent", "twoColumn"]).describe("Slide layout type");
+var ShapeTypeSchema = zod.z.enum(["rectangle", "ellipse", "line", "text", "image", "group", "other"]).describe("Type of shape to create");
+var RectangleSchema = zod.z.object({
+  x: zod.z.number().describe("X position in twips"),
+  y: zod.z.number().describe("Y position in twips"),
+  width: zod.z.number().positive().describe("Width in twips"),
+  height: zod.z.number().positive().describe("Height in twips")
 });
-var PositionSchema = z.object({
-  x: z.number().describe("X position in twips"),
-  y: z.number().describe("Y position in twips")
+var PositionSchema = zod.z.object({
+  x: zod.z.number().describe("X position in twips"),
+  y: zod.z.number().describe("Y position in twips")
 });
-var SizeSchema = z.object({
-  width: z.number().positive().describe("Width in twips"),
-  height: z.number().positive().describe("Height in twips")
+var SizeSchema = zod.z.object({
+  width: zod.z.number().positive().describe("Width in twips"),
+  height: zod.z.number().positive().describe("Height in twips")
 });
-var OutputFormatSchema = z.enum([
+var OutputFormatSchema = zod.z.enum([
   "pdf",
   "docx",
   "doc",
@@ -5321,8 +5324,8 @@ var commonTools = {
   getStructure: {
     name: "getStructure",
     description: "Get the document structure including paragraphs, sheets, slides, or pages depending on document type. Returns an overview of the document content.",
-    parameters: z.object({
-      maxResponseChars: z.number().int().positive().optional().describe("Maximum characters to return (default: 8000). Use for large documents.")
+    parameters: zod.z.object({
+      maxResponseChars: zod.z.number().int().positive().optional().describe("Maximum characters to return (default: 8000). Use for large documents.")
     }),
     documentTypes: ["all"]
   },
@@ -5330,14 +5333,14 @@ var commonTools = {
   save: {
     name: "save",
     description: "Save changes to the document at its original path.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["all"]
   },
   saveAs: {
     name: "saveAs",
     description: "Save the document to a new path with optional format conversion.",
-    parameters: z.object({
-      path: z.string().describe("Output file path"),
+    parameters: zod.z.object({
+      path: zod.z.string().describe("Output file path"),
       format: OutputFormatSchema
     }),
     documentTypes: ["all"]
@@ -5345,41 +5348,41 @@ var commonTools = {
   close: {
     name: "close",
     description: "Close the document and release resources.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["all"]
   },
   // History
   undo: {
     name: "undo",
     description: "Undo the last edit operation.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["all"]
   },
   redo: {
     name: "redo",
     description: "Redo the previously undone operation.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["all"]
   },
   // Search
   find: {
     name: "find",
     description: "Find text in the document. Returns match count and position of first match.",
-    parameters: z.object({
-      text: z.string().min(1).describe("Text to search for"),
-      caseSensitive: z.boolean().optional().describe("Match case exactly"),
-      wholeWord: z.boolean().optional().describe("Match whole words only")
+    parameters: zod.z.object({
+      text: zod.z.string().min(1).describe("Text to search for"),
+      caseSensitive: zod.z.boolean().optional().describe("Match case exactly"),
+      wholeWord: zod.z.boolean().optional().describe("Match whole words only")
     }),
     documentTypes: ["all"]
   },
   findAndReplaceAll: {
     name: "findAndReplaceAll",
     description: "Find all occurrences of text and replace them.",
-    parameters: z.object({
-      find: z.string().min(1).describe("Text to find"),
-      replace: z.string().describe("Replacement text"),
-      caseSensitive: z.boolean().optional().describe("Match case exactly"),
-      wholeWord: z.boolean().optional().describe("Match whole words only")
+    parameters: zod.z.object({
+      find: zod.z.string().min(1).describe("Text to find"),
+      replace: zod.z.string().describe("Replacement text"),
+      caseSensitive: zod.z.boolean().optional().describe("Match case exactly"),
+      wholeWord: zod.z.boolean().optional().describe("Match whole words only")
     }),
     documentTypes: ["all"]
   },
@@ -5387,26 +5390,26 @@ var commonTools = {
   getSelection: {
     name: "getSelection",
     description: "Get the currently selected text or range.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["all"]
   },
   clearSelection: {
     name: "clearSelection",
     description: "Clear the current selection.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["all"]
   },
   // Edit mode
   enableEditMode: {
     name: "enableEditMode",
     description: "Enable edit mode for the document. Required before making changes.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["all"]
   },
   getEditMode: {
     name: "getEditMode",
     description: "Get the current edit mode (0 = view, 1 = edit).",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["all"]
   }
 };
@@ -5414,52 +5417,52 @@ var writerTools = {
   getParagraph: {
     name: "getParagraph",
     description: "Get a single paragraph by its index. Use getStructure() first to see available paragraphs.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Zero-based paragraph index")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Zero-based paragraph index")
     }),
     documentTypes: ["writer"]
   },
   getParagraphs: {
     name: "getParagraphs",
     description: "Get a range of paragraphs. Useful for paginating through large documents.",
-    parameters: z.object({
-      start: z.number().int().min(0).describe("Starting paragraph index"),
-      count: z.number().int().positive().describe("Number of paragraphs to retrieve")
+    parameters: zod.z.object({
+      start: zod.z.number().int().min(0).describe("Starting paragraph index"),
+      count: zod.z.number().int().positive().describe("Number of paragraphs to retrieve")
     }),
     documentTypes: ["writer"]
   },
   insertParagraph: {
     name: "insertParagraph",
     description: "Insert a new paragraph with optional styling.",
-    parameters: z.object({
-      text: z.string().describe("Paragraph text content"),
-      afterIndex: z.number().int().min(0).optional().describe("Insert after this paragraph index. Omit to append at end."),
-      style: z.enum(["Normal", "Heading 1", "Heading 2", "Heading 3", "List"]).optional().describe("Paragraph style to apply")
+    parameters: zod.z.object({
+      text: zod.z.string().describe("Paragraph text content"),
+      afterIndex: zod.z.number().int().min(0).optional().describe("Insert after this paragraph index. Omit to append at end."),
+      style: zod.z.enum(["Normal", "Heading 1", "Heading 2", "Heading 3", "List"]).optional().describe("Paragraph style to apply")
     }),
     documentTypes: ["writer"]
   },
   replaceParagraph: {
     name: "replaceParagraph",
     description: "Replace the entire content of a paragraph.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Paragraph index to replace"),
-      text: z.string().describe("New paragraph text")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Paragraph index to replace"),
+      text: zod.z.string().describe("New paragraph text")
     }),
     documentTypes: ["writer"]
   },
   deleteParagraph: {
     name: "deleteParagraph",
     description: "Delete a paragraph by index.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Paragraph index to delete")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Paragraph index to delete")
     }),
     documentTypes: ["writer"]
   },
   insertText: {
     name: "insertText",
     description: "Insert text at a specific position within the document.",
-    parameters: z.object({
-      text: z.string().describe("Text to insert"),
+    parameters: zod.z.object({
+      text: zod.z.string().describe("Text to insert"),
       position: TextPositionSchema.describe("Position to insert at")
     }),
     documentTypes: ["writer"]
@@ -5467,7 +5470,7 @@ var writerTools = {
   deleteText: {
     name: "deleteText",
     description: "Delete text between two positions.",
-    parameters: z.object({
+    parameters: zod.z.object({
       start: TextPositionSchema.describe("Start position"),
       end: TextPositionSchema.describe("End position")
     }),
@@ -5476,18 +5479,18 @@ var writerTools = {
   replaceText: {
     name: "replaceText",
     description: "Find and replace text within the document.",
-    parameters: z.object({
-      find: z.string().min(1).describe("Text to find"),
-      replace: z.string().describe("Replacement text"),
-      paragraph: z.number().int().min(0).optional().describe("Limit to specific paragraph"),
-      all: z.boolean().optional().describe("Replace all occurrences (default: false)")
+    parameters: zod.z.object({
+      find: zod.z.string().min(1).describe("Text to find"),
+      replace: zod.z.string().describe("Replacement text"),
+      paragraph: zod.z.number().int().min(0).optional().describe("Limit to specific paragraph"),
+      all: zod.z.boolean().optional().describe("Replace all occurrences (default: false)")
     }),
     documentTypes: ["writer"]
   },
   formatText: {
     name: "formatText",
     description: "Apply formatting to a text range.",
-    parameters: z.object({
+    parameters: zod.z.object({
       range: TextRangeSchema.describe("Text range to format"),
       format: TextFormatSchema.describe("Formatting to apply")
     }),
@@ -5496,7 +5499,7 @@ var writerTools = {
   getFormat: {
     name: "getFormat",
     description: "Get the text formatting at the current cursor position or selection.",
-    parameters: z.object({
+    parameters: zod.z.object({
       position: TextPositionSchema.optional().describe("Position to check (uses current selection if omitted)")
     }),
     documentTypes: ["writer"]
@@ -5506,13 +5509,13 @@ var calcTools = {
   getSheetNames: {
     name: "getSheetNames",
     description: "Get the names of all sheets in the workbook.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["calc"]
   },
   getCell: {
     name: "getCell",
     description: "Get the value and formula of a single cell.",
-    parameters: z.object({
+    parameters: zod.z.object({
       cell: CellRefSchema.describe('Cell reference (e.g., "A1" or {row: 0, col: 0})'),
       sheet: SheetRefSchema.optional().describe("Sheet name or index (uses active sheet if omitted)")
     }),
@@ -5521,19 +5524,19 @@ var calcTools = {
   getCells: {
     name: "getCells",
     description: "Get values from a range of cells. Returns a 2D array.",
-    parameters: z.object({
+    parameters: zod.z.object({
       range: RangeRefSchema.describe('Cell range (e.g., "A1:C10")'),
       sheet: SheetRefSchema.optional().describe("Sheet name or index"),
-      maxResponseChars: z.number().int().positive().optional().describe("Maximum response size. Use smaller ranges for large data.")
+      maxResponseChars: zod.z.number().int().positive().optional().describe("Maximum response size. Use smaller ranges for large data.")
     }),
     documentTypes: ["calc"]
   },
   setCellValue: {
     name: "setCellValue",
     description: "Set the value of a single cell.",
-    parameters: z.object({
+    parameters: zod.z.object({
       cell: CellRefSchema.describe("Cell reference"),
-      value: z.union([z.string(), z.number()]).describe("Value to set"),
+      value: zod.z.union([zod.z.string(), zod.z.number()]).describe("Value to set"),
       sheet: SheetRefSchema.optional().describe("Sheet name or index")
     }),
     documentTypes: ["calc"]
@@ -5541,9 +5544,9 @@ var calcTools = {
   setCellFormula: {
     name: "setCellFormula",
     description: 'Set a formula in a cell. Formula should start with "=" (e.g., "=SUM(A1:A10)").',
-    parameters: z.object({
+    parameters: zod.z.object({
       cell: CellRefSchema.describe("Cell reference"),
-      formula: z.string().describe('Formula starting with "="'),
+      formula: zod.z.string().describe('Formula starting with "="'),
       sheet: SheetRefSchema.optional().describe("Sheet name or index")
     }),
     documentTypes: ["calc"]
@@ -5551,9 +5554,9 @@ var calcTools = {
   setCells: {
     name: "setCells",
     description: "Set values for multiple cells at once. Pass a 2D array of values.",
-    parameters: z.object({
+    parameters: zod.z.object({
       range: RangeRefSchema.describe("Starting cell or range"),
-      values: z.array(z.array(CellValueSchema)).describe("2D array of values. Rows are outer array, columns are inner."),
+      values: zod.z.array(zod.z.array(CellValueSchema)).describe("2D array of values. Rows are outer array, columns are inner."),
       sheet: SheetRefSchema.optional().describe("Sheet name or index")
     }),
     documentTypes: ["calc"]
@@ -5561,7 +5564,7 @@ var calcTools = {
   clearCell: {
     name: "clearCell",
     description: "Clear the contents of a cell.",
-    parameters: z.object({
+    parameters: zod.z.object({
       cell: CellRefSchema.describe("Cell reference"),
       sheet: SheetRefSchema.optional().describe("Sheet name or index")
     }),
@@ -5570,7 +5573,7 @@ var calcTools = {
   clearRange: {
     name: "clearRange",
     description: "Clear the contents of a range of cells.",
-    parameters: z.object({
+    parameters: zod.z.object({
       range: RangeRefSchema.describe("Cell range to clear"),
       sheet: SheetRefSchema.optional().describe("Sheet name or index")
     }),
@@ -5579,8 +5582,8 @@ var calcTools = {
   insertRow: {
     name: "insertRow",
     description: "Insert a new row after the specified row.",
-    parameters: z.object({
-      afterRow: z.number().int().min(0).describe("Insert after this row index (0-based)"),
+    parameters: zod.z.object({
+      afterRow: zod.z.number().int().min(0).describe("Insert after this row index (0-based)"),
       sheet: SheetRefSchema.optional().describe("Sheet name or index")
     }),
     documentTypes: ["calc"]
@@ -5588,10 +5591,10 @@ var calcTools = {
   insertColumn: {
     name: "insertColumn",
     description: "Insert a new column after the specified column.",
-    parameters: z.object({
-      afterCol: z.union([
-        z.string().describe('Column letter (e.g., "A", "B", "AA")'),
-        z.number().int().min(0).describe("Column index (0-based)")
+    parameters: zod.z.object({
+      afterCol: zod.z.union([
+        zod.z.string().describe('Column letter (e.g., "A", "B", "AA")'),
+        zod.z.number().int().min(0).describe("Column index (0-based)")
       ]).describe("Insert after this column"),
       sheet: SheetRefSchema.optional().describe("Sheet name or index")
     }),
@@ -5600,8 +5603,8 @@ var calcTools = {
   deleteRow: {
     name: "deleteRow",
     description: "Delete a row.",
-    parameters: z.object({
-      row: z.number().int().min(0).describe("Row index to delete"),
+    parameters: zod.z.object({
+      row: zod.z.number().int().min(0).describe("Row index to delete"),
       sheet: SheetRefSchema.optional().describe("Sheet name or index")
     }),
     documentTypes: ["calc"]
@@ -5609,10 +5612,10 @@ var calcTools = {
   deleteColumn: {
     name: "deleteColumn",
     description: "Delete a column.",
-    parameters: z.object({
-      col: z.union([
-        z.string().describe("Column letter"),
-        z.number().int().min(0).describe("Column index")
+    parameters: zod.z.object({
+      col: zod.z.union([
+        zod.z.string().describe("Column letter"),
+        zod.z.number().int().min(0).describe("Column index")
       ]).describe("Column to delete"),
       sheet: SheetRefSchema.optional().describe("Sheet name or index")
     }),
@@ -5621,7 +5624,7 @@ var calcTools = {
   formatCells: {
     name: "formatCells",
     description: "Apply formatting to a range of cells.",
-    parameters: z.object({
+    parameters: zod.z.object({
       range: RangeRefSchema.describe("Cell range to format"),
       format: CellFormatSchema.describe("Formatting to apply"),
       sheet: SheetRefSchema.optional().describe("Sheet name or index")
@@ -5631,24 +5634,24 @@ var calcTools = {
   addSheet: {
     name: "addSheet",
     description: "Add a new sheet to the workbook.",
-    parameters: z.object({
-      name: z.string().min(1).describe("Name for the new sheet")
+    parameters: zod.z.object({
+      name: zod.z.string().min(1).describe("Name for the new sheet")
     }),
     documentTypes: ["calc"]
   },
   renameSheet: {
     name: "renameSheet",
     description: "Rename an existing sheet.",
-    parameters: z.object({
+    parameters: zod.z.object({
       sheet: SheetRefSchema.describe("Sheet to rename"),
-      newName: z.string().min(1).describe("New sheet name")
+      newName: zod.z.string().min(1).describe("New sheet name")
     }),
     documentTypes: ["calc"]
   },
   deleteSheet: {
     name: "deleteSheet",
     description: "Delete a sheet from the workbook.",
-    parameters: z.object({
+    parameters: zod.z.object({
       sheet: SheetRefSchema.describe("Sheet to delete")
     }),
     documentTypes: ["calc"]
@@ -5658,22 +5661,22 @@ var impressTools = {
   getSlide: {
     name: "getSlide",
     description: "Get detailed content of a specific slide including title and text frames.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Zero-based slide index")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Zero-based slide index")
     }),
     documentTypes: ["impress"]
   },
   getSlideCount: {
     name: "getSlideCount",
     description: "Get the total number of slides in the presentation.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["impress"]
   },
   addSlide: {
     name: "addSlide",
     description: "Add a new slide to the presentation.",
-    parameters: z.object({
-      afterSlide: z.number().int().min(0).optional().describe("Insert after this slide index. Omit to append at end."),
+    parameters: zod.z.object({
+      afterSlide: zod.z.number().int().min(0).optional().describe("Insert after this slide index. Omit to append at end."),
       layout: SlideLayoutSchema.optional().describe("Slide layout to use")
     }),
     documentTypes: ["impress"]
@@ -5681,60 +5684,60 @@ var impressTools = {
   deleteSlide: {
     name: "deleteSlide",
     description: "Delete a slide from the presentation. Cannot delete the last slide.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index to delete")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Slide index to delete")
     }),
     documentTypes: ["impress"]
   },
   duplicateSlide: {
     name: "duplicateSlide",
     description: "Create a copy of a slide. The copy is inserted after the original.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index to duplicate")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Slide index to duplicate")
     }),
     documentTypes: ["impress"]
   },
   moveSlide: {
     name: "moveSlide",
     description: "Move a slide to a different position.",
-    parameters: z.object({
-      fromIndex: z.number().int().min(0).describe("Current slide index"),
-      toIndex: z.number().int().min(0).describe("Target position index")
+    parameters: zod.z.object({
+      fromIndex: zod.z.number().int().min(0).describe("Current slide index"),
+      toIndex: zod.z.number().int().min(0).describe("Target position index")
     }),
     documentTypes: ["impress"]
   },
   setSlideTitle: {
     name: "setSlideTitle",
     description: "Set or replace the title text of a slide.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index"),
-      title: z.string().describe("New title text")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Slide index"),
+      title: zod.z.string().describe("New title text")
     }),
     documentTypes: ["impress"]
   },
   setSlideBody: {
     name: "setSlideBody",
     description: "Set or replace the body text of a slide.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index"),
-      body: z.string().describe("New body text")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Slide index"),
+      body: zod.z.string().describe("New body text")
     }),
     documentTypes: ["impress"]
   },
   setSlideNotes: {
     name: "setSlideNotes",
     description: "Set speaker notes for a slide.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index"),
-      notes: z.string().describe("Speaker notes text")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Slide index"),
+      notes: zod.z.string().describe("Speaker notes text")
     }),
     documentTypes: ["impress"]
   },
   setSlideLayout: {
     name: "setSlideLayout",
     description: "Change the layout of a slide.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Slide index"),
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Slide index"),
       layout: SlideLayoutSchema.describe("New layout to apply")
     }),
     documentTypes: ["impress"]
@@ -5744,91 +5747,91 @@ var drawTools = {
   getPage: {
     name: "getPage",
     description: "Get detailed content of a specific page including shapes.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Zero-based page index")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Zero-based page index")
     }),
     documentTypes: ["draw"]
   },
   getPageCount: {
     name: "getPageCount",
     description: "Get the total number of pages in the document.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["draw"]
   },
   addPage: {
     name: "addPage",
     description: "Add a new page to the document.",
-    parameters: z.object({
-      afterPage: z.number().int().min(0).optional().describe("Insert after this page index. Omit to append at end.")
+    parameters: zod.z.object({
+      afterPage: zod.z.number().int().min(0).optional().describe("Insert after this page index. Omit to append at end.")
     }),
     documentTypes: ["draw"]
   },
   deletePage: {
     name: "deletePage",
     description: "Delete a page from the document. Cannot delete the last page.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Page index to delete")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Page index to delete")
     }),
     documentTypes: ["draw"]
   },
   duplicatePage: {
     name: "duplicatePage",
     description: "Create a copy of a page. The copy is inserted after the original.",
-    parameters: z.object({
-      index: z.number().int().min(0).describe("Page index to duplicate")
+    parameters: zod.z.object({
+      index: zod.z.number().int().min(0).describe("Page index to duplicate")
     }),
     documentTypes: ["draw"]
   },
   addShape: {
     name: "addShape",
     description: "Add a shape to a page.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
+    parameters: zod.z.object({
+      pageIndex: zod.z.number().int().min(0).describe("Page index"),
       shapeType: ShapeTypeSchema.describe("Type of shape to create"),
       bounds: RectangleSchema.describe("Position and size of the shape"),
-      text: z.string().optional().describe("Text content for the shape"),
-      fillColor: z.string().optional().describe('Fill color as hex (e.g., "#FF0000")'),
-      lineColor: z.string().optional().describe("Line/stroke color as hex")
+      text: zod.z.string().optional().describe("Text content for the shape"),
+      fillColor: zod.z.string().optional().describe('Fill color as hex (e.g., "#FF0000")'),
+      lineColor: zod.z.string().optional().describe("Line/stroke color as hex")
     }),
     documentTypes: ["draw"]
   },
   addLine: {
     name: "addLine",
     description: "Add a line to a page.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
+    parameters: zod.z.object({
+      pageIndex: zod.z.number().int().min(0).describe("Page index"),
       start: PositionSchema.describe("Start point of the line"),
       end: PositionSchema.describe("End point of the line"),
-      lineColor: z.string().optional().describe("Line color as hex"),
-      lineWidth: z.number().positive().optional().describe("Line width in twips")
+      lineColor: zod.z.string().optional().describe("Line color as hex"),
+      lineWidth: zod.z.number().positive().optional().describe("Line width in twips")
     }),
     documentTypes: ["draw"]
   },
   deleteShape: {
     name: "deleteShape",
     description: "Delete a shape from a page.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
-      shapeIndex: z.number().int().min(0).describe("Shape index on the page")
+    parameters: zod.z.object({
+      pageIndex: zod.z.number().int().min(0).describe("Page index"),
+      shapeIndex: zod.z.number().int().min(0).describe("Shape index on the page")
     }),
     documentTypes: ["draw"]
   },
   setShapeText: {
     name: "setShapeText",
     description: "Set or replace the text content of a shape.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
-      shapeIndex: z.number().int().min(0).describe("Shape index"),
-      text: z.string().describe("New text content")
+    parameters: zod.z.object({
+      pageIndex: zod.z.number().int().min(0).describe("Page index"),
+      shapeIndex: zod.z.number().int().min(0).describe("Shape index"),
+      text: zod.z.string().describe("New text content")
     }),
     documentTypes: ["draw"]
   },
   moveShape: {
     name: "moveShape",
     description: "Move a shape to a new position.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
-      shapeIndex: z.number().int().min(0).describe("Shape index"),
+    parameters: zod.z.object({
+      pageIndex: zod.z.number().int().min(0).describe("Page index"),
+      shapeIndex: zod.z.number().int().min(0).describe("Shape index"),
       position: PositionSchema.describe("New position")
     }),
     documentTypes: ["draw"]
@@ -5836,9 +5839,9 @@ var drawTools = {
   resizeShape: {
     name: "resizeShape",
     description: "Resize a shape.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Page index"),
-      shapeIndex: z.number().int().min(0).describe("Shape index"),
+    parameters: zod.z.object({
+      pageIndex: zod.z.number().int().min(0).describe("Page index"),
+      shapeIndex: zod.z.number().int().min(0).describe("Shape index"),
       size: SizeSchema.describe("New size")
     }),
     documentTypes: ["draw"]
@@ -5848,11 +5851,11 @@ var documentTools = {
   convertDocument: {
     name: "convertDocument",
     description: "Convert the entire document to a different format. Returns the converted document as binary data. Use this for format conversions like DOCX to PDF, XLSX to CSV, PPTX to PDF, etc.",
-    parameters: z.object({
+    parameters: zod.z.object({
       outputFormat: OutputFormatSchema.describe("Target format for conversion"),
-      options: z.object({
-        pdfVersion: z.enum(["PDF/A-1b", "PDF/A-2b", "PDF/A-3b"]).optional().describe("PDF/A compliance level for PDF output"),
-        quality: z.number().min(1).max(100).optional().describe("Quality for image formats (1-100)")
+      options: zod.z.object({
+        pdfVersion: zod.z.enum(["PDF/A-1b", "PDF/A-2b", "PDF/A-3b"]).optional().describe("PDF/A compliance level for PDF output"),
+        quality: zod.z.number().min(1).max(100).optional().describe("Quality for image formats (1-100)")
       }).optional().describe("Format-specific conversion options")
     }),
     documentTypes: ["all"]
@@ -5860,29 +5863,29 @@ var documentTools = {
   renderPageToImage: {
     name: "renderPageToImage",
     description: "Render a specific page/slide to an image (PNG, JPG, or WebP). Useful for generating thumbnails, previews, or extracting visual content from documents.",
-    parameters: z.object({
-      pageIndex: z.number().int().min(0).describe("Zero-based page/slide index to render"),
-      format: z.enum(["png", "jpg", "webp"]).default("png").describe("Output image format"),
-      width: z.number().int().min(1).max(4096).default(1024).describe("Output image width in pixels"),
-      height: z.number().int().min(0).max(4096).default(0).describe("Output image height in pixels (0 = auto based on aspect ratio)"),
-      quality: z.number().min(1).max(100).default(90).describe("Quality for JPG/WebP (1-100)")
+    parameters: zod.z.object({
+      pageIndex: zod.z.number().int().min(0).describe("Zero-based page/slide index to render"),
+      format: zod.z.enum(["png", "jpg", "webp"]).default("png").describe("Output image format"),
+      width: zod.z.number().int().min(1).max(4096).default(1024).describe("Output image width in pixels"),
+      height: zod.z.number().int().min(0).max(4096).default(0).describe("Output image height in pixels (0 = auto based on aspect ratio)"),
+      quality: zod.z.number().min(1).max(100).default(90).describe("Quality for JPG/WebP (1-100)")
     }),
     documentTypes: ["all"]
   },
   getPageCount: {
     name: "getPageCount",
     description: "Get the total number of pages, slides, or sheets in the document. For Writer documents, returns page count. For Calc, returns sheet count. For Impress/Draw, returns slide/page count.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["all"]
   },
   exportPageToPdf: {
     name: "exportPageToPdf",
     description: "Export a specific page or range of pages to PDF. Useful for extracting a subset of pages from a larger document.",
-    parameters: z.object({
-      startPage: z.number().int().min(0).describe("Starting page index (0-based)"),
-      endPage: z.number().int().min(0).optional().describe("Ending page index (0-based, inclusive). If omitted, exports only startPage."),
-      options: z.object({
-        pdfVersion: z.enum(["PDF/A-1b", "PDF/A-2b", "PDF/A-3b"]).optional().describe("PDF/A compliance level")
+    parameters: zod.z.object({
+      startPage: zod.z.number().int().min(0).describe("Starting page index (0-based)"),
+      endPage: zod.z.number().int().min(0).optional().describe("Ending page index (0-based, inclusive). If omitted, exports only startPage."),
+      options: zod.z.object({
+        pdfVersion: zod.z.enum(["PDF/A-1b", "PDF/A-2b", "PDF/A-3b"]).optional().describe("PDF/A compliance level")
       }).optional()
     }),
     documentTypes: ["all"]
@@ -5890,37 +5893,37 @@ var documentTools = {
   getDocumentMetadata: {
     name: "getDocumentMetadata",
     description: "Get document metadata including title, author, creation date, modification date, page count, and document type.",
-    parameters: z.object({}),
+    parameters: zod.z.object({}),
     documentTypes: ["all"]
   },
   setDocumentMetadata: {
     name: "setDocumentMetadata",
     description: "Set document metadata such as title, author, subject, and keywords.",
-    parameters: z.object({
-      title: z.string().optional().describe("Document title"),
-      author: z.string().optional().describe("Document author"),
-      subject: z.string().optional().describe("Document subject"),
-      keywords: z.array(z.string()).optional().describe("Document keywords for search/categorization")
+    parameters: zod.z.object({
+      title: zod.z.string().optional().describe("Document title"),
+      author: zod.z.string().optional().describe("Document author"),
+      subject: zod.z.string().optional().describe("Document subject"),
+      keywords: zod.z.array(zod.z.string()).optional().describe("Document keywords for search/categorization")
     }),
     documentTypes: ["all"]
   },
   exportToHtml: {
     name: "exportToHtml",
     description: "Export the document to HTML format. Useful for web publishing or extracting formatted content.",
-    parameters: z.object({
-      includeImages: z.boolean().default(true).describe("Whether to embed images in the HTML"),
-      inlineStyles: z.boolean().default(true).describe("Whether to use inline CSS styles")
+    parameters: zod.z.object({
+      includeImages: zod.z.boolean().default(true).describe("Whether to embed images in the HTML"),
+      inlineStyles: zod.z.boolean().default(true).describe("Whether to use inline CSS styles")
     }),
     documentTypes: ["all"]
   },
   extractText: {
     name: "extractText",
     description: "Extract all text content from the document as plain text. Useful for indexing, searching, or text analysis.",
-    parameters: z.object({
-      preserveFormatting: z.boolean().default(false).describe("Attempt to preserve basic formatting like paragraphs and lists"),
-      pageRange: z.object({
-        start: z.number().int().min(0).describe("Start page (0-based)"),
-        end: z.number().int().min(0).describe("End page (0-based, inclusive)")
+    parameters: zod.z.object({
+      preserveFormatting: zod.z.boolean().default(false).describe("Attempt to preserve basic formatting like paragraphs and lists"),
+      pageRange: zod.z.object({
+        start: zod.z.number().int().min(0).describe("Start page (0-based)"),
+        end: zod.z.number().int().min(0).describe("End page (0-based, inclusive)")
       }).optional().describe("Extract text from specific page range only")
     }),
     documentTypes: ["all"]
@@ -5928,11 +5931,11 @@ var documentTools = {
   printDocument: {
     name: "printDocument",
     description: "Generate print-ready output. Configures the document for printing with specified settings.",
-    parameters: z.object({
-      copies: z.number().int().min(1).max(999).default(1).describe("Number of copies"),
-      pageRange: z.string().optional().describe('Page range to print (e.g., "1-5", "1,3,5", "all")'),
-      orientation: z.enum(["portrait", "landscape"]).optional().describe("Page orientation"),
-      paperSize: z.enum(["letter", "a4", "legal", "a3", "a5"]).optional().describe("Paper size")
+    parameters: zod.z.object({
+      copies: zod.z.number().int().min(1).max(999).default(1).describe("Number of copies"),
+      pageRange: zod.z.string().optional().describe('Page range to print (e.g., "1-5", "1,3,5", "all")'),
+      orientation: zod.z.enum(["portrait", "landscape"]).optional().describe("Page orientation"),
+      paperSize: zod.z.enum(["letter", "a4", "legal", "a3", "a5"]).optional().describe("Paper size")
     }),
     documentTypes: ["all"]
   }
@@ -5973,7 +5976,7 @@ function getToolsForDocumentType(docType) {
   return tools;
 }
 function zodToJsonSchema(schema) {
-  const jsonSchema = z.toJSONSchema(schema, { target: "draft-7" });
+  const jsonSchema = zod.z.toJSONSchema(schema, { target: "draft-7" });
   const { $schema: _schema, ...rest } = jsonSchema;
   return rest;
 }
@@ -6031,63 +6034,87 @@ function isDrawEditor(editor) {
   return editor.getDocumentType() === "draw";
 }
 
-// src/index.ts
-var isNode = typeof process !== "undefined" && process.versions != null && process.versions.node != null;
+// src/server.ts
 async function createConverter(options) {
   const converter = new LibreOfficeConverter(options);
   await converter.initialize();
   return converter;
 }
 async function convertDocument(input, options, converterOptions) {
-  const isBasicConversion = !options.image;
-  if (isNode && isBasicConversion) {
-    const converter2 = await createSubprocessConverter(converterOptions);
-    try {
-      return await converter2.convert(input, options);
-    } finally {
-      await converter2.destroy();
-    }
-  }
-  const converter = await createConverter(converterOptions);
+  const converter = await createSubprocessConverter(converterOptions);
   try {
     return await converter.convert(input, options);
   } finally {
     await converter.destroy();
   }
 }
-async function exportAsImage(input, pages, format = "png", imageOptions, converterOptions) {
-  const pageArray = Array.isArray(pages) ? pages : [pages];
-  if (pageArray.length === 0) {
-    throw new Error("pages is required and must not be empty");
-  }
-  const converter = await createConverter(converterOptions);
-  try {
-    const results = [];
-    for (const pageIndex of pageArray) {
-      const result = await converter.convert(input, {
-        outputFormat: format,
-        image: { ...imageOptions, pageIndex }
-      });
-      results.push(result);
-    }
-    return results;
-  } finally {
-    await converter.destroy();
-  }
-}
-function isInputFormatSupported(format) {
-  return LibreOfficeConverter.getSupportedInputFormats().includes(format.toLowerCase());
-}
-function isOutputFormatSupported(format) {
-  return LibreOfficeConverter.getSupportedOutputFormats().includes(format.toLowerCase());
-}
-function isConversionSupported(inputFormat, outputFormat) {
-  return LibreOfficeConverter.isConversionSupported(inputFormat, outputFormat);
-}
-function getValidOutputFormatsFor(inputFormat) {
-  return LibreOfficeConverter.getValidOutputFormats(inputFormat);
-}
 
-export { CATEGORY_OUTPUT_FORMATS, CalcEditor, ConversionError, ConversionErrorCode, DEFAULT_WASM_BASE_URL, DrawEditor, EXTENSION_TO_FORMAT, FORMAT_FILTERS, FORMAT_MIME_TYPES, INPUT_FORMAT_CATEGORY, ImpressEditor, LOKDocumentType, LOK_DOCTYPE_DRAWING, LOK_DOCTYPE_OTHER, LOK_DOCTYPE_OUTPUT_FORMATS, LOK_DOCTYPE_PRESENTATION, LOK_DOCTYPE_SPREADSHEET, LOK_DOCTYPE_TEXT, LOK_KEYEVENT_KEYINPUT, LOK_KEYEVENT_KEYUP, LOK_MOUSEEVENT_BUTTONDOWN, LOK_MOUSEEVENT_BUTTONUP, LOK_MOUSEEVENT_MOVE, LOK_SELTYPE_CELL, LOK_SELTYPE_NONE, LOK_SELTYPE_TEXT, LOK_SETTEXTSELECTION_END, LOK_SETTEXTSELECTION_RESET, LOK_SETTEXTSELECTION_START, LibreOfficeConverter, OfficeEditor, SubprocessConverter, WorkerConverter, WriterEditor, allTools, calcTools, commonTools, convertDocument, createConverter, createEditor, createSubprocessConverter, createWasmPaths, createWorkerConverter, documentTools, drawTools, encodeImage, exportAsImage, getAnthropicTools, getConversionErrorMessage, getOpenAIFunctions, getOutputFormatsForDocType, getSharp, getToolsForDocumentType, getValidOutputFormats, getValidOutputFormatsFor, impressTools, isCalcEditor, isConversionSupported, isConversionValid, isDrawEditor, isImpressEditor, isInputFormatSupported, isOutputFormatSupported, isSharpAvailable, isWriterEditor, rgbaToJpeg, rgbaToPng, rgbaToWebp, toAnthropicTool, toOpenAIFunction, toolsByName, writerTools };
-//# sourceMappingURL=index.js.map
-//# sourceMappingURL=index.js.map
+exports.CATEGORY_OUTPUT_FORMATS = CATEGORY_OUTPUT_FORMATS;
+exports.CalcEditor = CalcEditor;
+exports.ConversionError = ConversionError;
+exports.ConversionErrorCode = ConversionErrorCode;
+exports.DEFAULT_WASM_BASE_URL = DEFAULT_WASM_BASE_URL;
+exports.DrawEditor = DrawEditor;
+exports.EXTENSION_TO_FORMAT = EXTENSION_TO_FORMAT;
+exports.FORMAT_FILTERS = FORMAT_FILTERS;
+exports.FORMAT_MIME_TYPES = FORMAT_MIME_TYPES;
+exports.INPUT_FORMAT_CATEGORY = INPUT_FORMAT_CATEGORY;
+exports.ImpressEditor = ImpressEditor;
+exports.LOKDocumentType = LOKDocumentType;
+exports.LOK_DOCTYPE_DRAWING = LOK_DOCTYPE_DRAWING;
+exports.LOK_DOCTYPE_OTHER = LOK_DOCTYPE_OTHER;
+exports.LOK_DOCTYPE_OUTPUT_FORMATS = LOK_DOCTYPE_OUTPUT_FORMATS;
+exports.LOK_DOCTYPE_PRESENTATION = LOK_DOCTYPE_PRESENTATION;
+exports.LOK_DOCTYPE_SPREADSHEET = LOK_DOCTYPE_SPREADSHEET;
+exports.LOK_DOCTYPE_TEXT = LOK_DOCTYPE_TEXT;
+exports.LOK_KEYEVENT_KEYINPUT = LOK_KEYEVENT_KEYINPUT;
+exports.LOK_KEYEVENT_KEYUP = LOK_KEYEVENT_KEYUP;
+exports.LOK_MOUSEEVENT_BUTTONDOWN = LOK_MOUSEEVENT_BUTTONDOWN;
+exports.LOK_MOUSEEVENT_BUTTONUP = LOK_MOUSEEVENT_BUTTONUP;
+exports.LOK_MOUSEEVENT_MOVE = LOK_MOUSEEVENT_MOVE;
+exports.LOK_SELTYPE_CELL = LOK_SELTYPE_CELL;
+exports.LOK_SELTYPE_NONE = LOK_SELTYPE_NONE;
+exports.LOK_SELTYPE_TEXT = LOK_SELTYPE_TEXT;
+exports.LOK_SETTEXTSELECTION_END = LOK_SETTEXTSELECTION_END;
+exports.LOK_SETTEXTSELECTION_RESET = LOK_SETTEXTSELECTION_RESET;
+exports.LOK_SETTEXTSELECTION_START = LOK_SETTEXTSELECTION_START;
+exports.LibreOfficeConverter = LibreOfficeConverter;
+exports.OfficeEditor = OfficeEditor;
+exports.SubprocessConverter = SubprocessConverter;
+exports.WorkerConverter = WorkerConverter;
+exports.WriterEditor = WriterEditor;
+exports.allTools = allTools;
+exports.calcTools = calcTools;
+exports.commonTools = commonTools;
+exports.convertDocument = convertDocument;
+exports.createConverter = createConverter;
+exports.createEditor = createEditor;
+exports.createSubprocessConverter = createSubprocessConverter;
+exports.createWasmPaths = createWasmPaths;
+exports.createWorkerConverter = createWorkerConverter;
+exports.documentTools = documentTools;
+exports.drawTools = drawTools;
+exports.encodeImage = encodeImage;
+exports.getAnthropicTools = getAnthropicTools;
+exports.getConversionErrorMessage = getConversionErrorMessage;
+exports.getOpenAIFunctions = getOpenAIFunctions;
+exports.getOutputFormatsForDocType = getOutputFormatsForDocType;
+exports.getSharp = getSharp;
+exports.getToolsForDocumentType = getToolsForDocumentType;
+exports.getValidOutputFormats = getValidOutputFormats;
+exports.impressTools = impressTools;
+exports.isCalcEditor = isCalcEditor;
+exports.isConversionValid = isConversionValid;
+exports.isDrawEditor = isDrawEditor;
+exports.isImpressEditor = isImpressEditor;
+exports.isSharpAvailable = isSharpAvailable;
+exports.isWriterEditor = isWriterEditor;
+exports.rgbaToJpeg = rgbaToJpeg;
+exports.rgbaToPng = rgbaToPng;
+exports.rgbaToWebp = rgbaToWebp;
+exports.toAnthropicTool = toAnthropicTool;
+exports.toOpenAIFunction = toOpenAIFunction;
+exports.toolsByName = toolsByName;
+exports.writerTools = writerTools;
+//# sourceMappingURL=server.cjs.map
+//# sourceMappingURL=server.cjs.map

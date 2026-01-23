@@ -6031,63 +6031,21 @@ function isDrawEditor(editor) {
   return editor.getDocumentType() === "draw";
 }
 
-// src/index.ts
-var isNode = typeof process !== "undefined" && process.versions != null && process.versions.node != null;
+// src/server.ts
 async function createConverter(options) {
   const converter = new LibreOfficeConverter(options);
   await converter.initialize();
   return converter;
 }
 async function convertDocument(input, options, converterOptions) {
-  const isBasicConversion = !options.image;
-  if (isNode && isBasicConversion) {
-    const converter2 = await createSubprocessConverter(converterOptions);
-    try {
-      return await converter2.convert(input, options);
-    } finally {
-      await converter2.destroy();
-    }
-  }
-  const converter = await createConverter(converterOptions);
+  const converter = await createSubprocessConverter(converterOptions);
   try {
     return await converter.convert(input, options);
   } finally {
     await converter.destroy();
   }
 }
-async function exportAsImage(input, pages, format = "png", imageOptions, converterOptions) {
-  const pageArray = Array.isArray(pages) ? pages : [pages];
-  if (pageArray.length === 0) {
-    throw new Error("pages is required and must not be empty");
-  }
-  const converter = await createConverter(converterOptions);
-  try {
-    const results = [];
-    for (const pageIndex of pageArray) {
-      const result = await converter.convert(input, {
-        outputFormat: format,
-        image: { ...imageOptions, pageIndex }
-      });
-      results.push(result);
-    }
-    return results;
-  } finally {
-    await converter.destroy();
-  }
-}
-function isInputFormatSupported(format) {
-  return LibreOfficeConverter.getSupportedInputFormats().includes(format.toLowerCase());
-}
-function isOutputFormatSupported(format) {
-  return LibreOfficeConverter.getSupportedOutputFormats().includes(format.toLowerCase());
-}
-function isConversionSupported(inputFormat, outputFormat) {
-  return LibreOfficeConverter.isConversionSupported(inputFormat, outputFormat);
-}
-function getValidOutputFormatsFor(inputFormat) {
-  return LibreOfficeConverter.getValidOutputFormats(inputFormat);
-}
 
-export { CATEGORY_OUTPUT_FORMATS, CalcEditor, ConversionError, ConversionErrorCode, DEFAULT_WASM_BASE_URL, DrawEditor, EXTENSION_TO_FORMAT, FORMAT_FILTERS, FORMAT_MIME_TYPES, INPUT_FORMAT_CATEGORY, ImpressEditor, LOKDocumentType, LOK_DOCTYPE_DRAWING, LOK_DOCTYPE_OTHER, LOK_DOCTYPE_OUTPUT_FORMATS, LOK_DOCTYPE_PRESENTATION, LOK_DOCTYPE_SPREADSHEET, LOK_DOCTYPE_TEXT, LOK_KEYEVENT_KEYINPUT, LOK_KEYEVENT_KEYUP, LOK_MOUSEEVENT_BUTTONDOWN, LOK_MOUSEEVENT_BUTTONUP, LOK_MOUSEEVENT_MOVE, LOK_SELTYPE_CELL, LOK_SELTYPE_NONE, LOK_SELTYPE_TEXT, LOK_SETTEXTSELECTION_END, LOK_SETTEXTSELECTION_RESET, LOK_SETTEXTSELECTION_START, LibreOfficeConverter, OfficeEditor, SubprocessConverter, WorkerConverter, WriterEditor, allTools, calcTools, commonTools, convertDocument, createConverter, createEditor, createSubprocessConverter, createWasmPaths, createWorkerConverter, documentTools, drawTools, encodeImage, exportAsImage, getAnthropicTools, getConversionErrorMessage, getOpenAIFunctions, getOutputFormatsForDocType, getSharp, getToolsForDocumentType, getValidOutputFormats, getValidOutputFormatsFor, impressTools, isCalcEditor, isConversionSupported, isConversionValid, isDrawEditor, isImpressEditor, isInputFormatSupported, isOutputFormatSupported, isSharpAvailable, isWriterEditor, rgbaToJpeg, rgbaToPng, rgbaToWebp, toAnthropicTool, toOpenAIFunction, toolsByName, writerTools };
-//# sourceMappingURL=index.js.map
-//# sourceMappingURL=index.js.map
+export { CATEGORY_OUTPUT_FORMATS, CalcEditor, ConversionError, ConversionErrorCode, DEFAULT_WASM_BASE_URL, DrawEditor, EXTENSION_TO_FORMAT, FORMAT_FILTERS, FORMAT_MIME_TYPES, INPUT_FORMAT_CATEGORY, ImpressEditor, LOKDocumentType, LOK_DOCTYPE_DRAWING, LOK_DOCTYPE_OTHER, LOK_DOCTYPE_OUTPUT_FORMATS, LOK_DOCTYPE_PRESENTATION, LOK_DOCTYPE_SPREADSHEET, LOK_DOCTYPE_TEXT, LOK_KEYEVENT_KEYINPUT, LOK_KEYEVENT_KEYUP, LOK_MOUSEEVENT_BUTTONDOWN, LOK_MOUSEEVENT_BUTTONUP, LOK_MOUSEEVENT_MOVE, LOK_SELTYPE_CELL, LOK_SELTYPE_NONE, LOK_SELTYPE_TEXT, LOK_SETTEXTSELECTION_END, LOK_SETTEXTSELECTION_RESET, LOK_SETTEXTSELECTION_START, LibreOfficeConverter, OfficeEditor, SubprocessConverter, WorkerConverter, WriterEditor, allTools, calcTools, commonTools, convertDocument, createConverter, createEditor, createSubprocessConverter, createWasmPaths, createWorkerConverter, documentTools, drawTools, encodeImage, getAnthropicTools, getConversionErrorMessage, getOpenAIFunctions, getOutputFormatsForDocType, getSharp, getToolsForDocumentType, getValidOutputFormats, impressTools, isCalcEditor, isConversionValid, isDrawEditor, isImpressEditor, isSharpAvailable, isWriterEditor, rgbaToJpeg, rgbaToPng, rgbaToWebp, toAnthropicTool, toOpenAIFunction, toolsByName, writerTools };
+//# sourceMappingURL=server.js.map
+//# sourceMappingURL=server.js.map

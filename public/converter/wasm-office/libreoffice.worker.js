@@ -1,1 +1,0 @@
-Redirecting to /@matbee/libreoffice-converter@2.5.0/dist/libreoffice.worker.js
