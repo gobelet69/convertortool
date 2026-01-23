@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { } // Mode HD Dynamique
+    doc:   { } // Mode Capture HD Reflow
 };
 
 let files = [];
@@ -103,7 +103,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Capture HD Ratio Exact</div>`;
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Capture HD Anti-Chevauchement</div>`;
     }
 
     div.innerHTML = `
@@ -172,7 +172,7 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> CAPTURE PARFAITE (RATIO FIX) ---
+        // --- 1. DOCX -> CAPTURE ANTI-CHEVAUCHEMENT ---
         if (f.type === 'doc') {
             console.log(`\n--- TRAITEMENT DOCX : ${f.file.name} ---`);
             els.stat.innerText = "1/4 Lecture DOCX...";
@@ -207,6 +207,9 @@ async function processFile(f) {
             });
             const pdfW = 210;
 
+            // Pour éviter les bugs de capture dus au défilement, on remonte la page tout en haut.
+            window.scrollTo(0, 0);
+
             console.log("3. Début de la capture page par page...");
             for (let i = 0; i < totalPages; i++) {
                 els.stat.innerText = `Capture Page ${i + 1}/${totalPages}...`;
@@ -215,25 +218,25 @@ async function processFile(f) {
 
                 if (i > 0) pdf.addPage();
 
+                // 1. On cache toutes les pages SAUF la page actuelle
                 pagesWord.forEach((p, idx) => p.style.display = (idx === i) ? 'block' : 'none');
 
-                // CORRECTION MAJEURE ICI : 
-                // Suppression de windowWidth/Height qui cassaient le rendu.
-                // Ajout de scrollX: 0 et scrollY: 0 pour fixer la vue.
+                // 2. CORRECTION DU BUG DE CHEVAUCHEMENT (Reflow Delay)
+                // On attend 150ms pour laisser au navigateur le temps de placer les éléments (images, textes flottants).
+                await new Promise(r => setTimeout(r, 150));
+
+                // 3. Capture propre (Sans forcer les scroll/width qui faussaient la donne)
                 const canvas = await html2canvas(pagesWord[i], {
                     scale: 2.0, 
                     useCORS: true,
                     backgroundColor: "#ffffff",
-                    scrollX: 0,
-                    scrollY: 0
+                    logging: false // Désactive les logs lourds de html2canvas
                 });
 
                 const imgData = canvas.toDataURL('image/jpeg', 0.80);
                 
-                // CORRECTION DU RATIO (Anti-Écrasement)
-                // On calcule la vraie hauteur de la capture pour ne JAMAIS l'étirer.
+                // Maintien du ratio exact pour ne jamais étirer ou écraser
                 const imgHeight = (canvas.height * pdfW) / canvas.width;
-                
                 pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgHeight);
             }
 
