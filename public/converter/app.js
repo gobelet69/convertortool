@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { } 
+    doc:   { } // Mode Isolation Stricte
 };
 
 let files = [];
@@ -103,7 +103,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Polices Forcées + Anti-Overlap</div>`;
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Isolation Stricte (Anti-Fusion)</div>`;
     }
 
     div.innerHTML = `
@@ -172,7 +172,7 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> CAPTURE HD AVEC CHARGEMENT FORCE DES POLICES ---
+        // --- 1. DOCX -> CAPTURE AVEC ISOLATION STRICTE DES NOEUDS ---
         if (f.type === 'doc') {
             console.log(`\n--- TRAITEMENT DOCX : ${f.file.name} ---`);
             els.stat.innerText = "1/4 Lecture DOCX...";
@@ -191,43 +191,45 @@ async function processFile(f) {
                 useBase64URL: true 
             });
 
-            // CORRECTION 1 : Désactiver les ligatures (le "fi" collé) qui font bugger la position du texte
-            // CORRECTION 2 : Forcer une hauteur de ligne stricte
+            // On désactive les ligatures pour éviter les bugs de police
             dom.docRenderer.style.fontVariantLigatures = "none";
             dom.docRenderer.style.textRendering = "geometricPrecision";
 
+            // On récupère toutes les pages (noeuds DOM) générées
             const pagesWord = Array.from(dom.docRenderer.querySelectorAll('.docx'));
             const totalPages = pagesWord.length;
 
             console.log(`✅ ${totalPages} pages détectées.`);
-            
-            // CORRECTION 3 : FORCER LE CHARGEMENT DES POLICES
-            // C'est vital. On oblige le navigateur à attendre que TOUTES les polices soient téléchargées
-            // avant de faire le moindre calcul de positionnement.
             els.stat.innerText = `3/4 Chargement des polices...`;
-            await document.fonts.ready; 
             
-            // Pause allongée à 500ms pour les gros documents comme ton TFE.
+            // Attente des polices
+            await document.fonts.ready; 
             await new Promise(r => setTimeout(r, 500)); 
+
+            // ------ LE FIX ULTIME DE CHEVAUCHEMENT COMMENCE ICI ------
+            // On retire physiquement TOUTES les pages du DOM. 
+            // Elles restent stockées dans notre variable 'pagesWord', prêtes à être injectées.
+            pagesWord.forEach(p => p.remove());
 
             const { jsPDF } = window.jspdf;
             const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true });
             const pdfW = 210;
 
-            window.scrollTo(0, 0);
-
-            console.log("3. Début de la capture page par page...");
+            console.log("3. Début de la capture page par page (Isolation Stricte)...");
             for (let i = 0; i < totalPages; i++) {
                 els.stat.innerText = `Capture Page ${i + 1}/${totalPages}...`;
                 els.bar.style.width = `${((i + 1) / totalPages) * 100}%`;
 
                 if (i > 0) pdf.addPage();
 
-                pagesWord.forEach((p, idx) => p.style.display = (idx === i) ? 'block' : 'none');
+                // 1. On injecte UNIQUEMENT LA PAGE ACTUELLE dans le moteur de rendu.
+                // Il n'y a donc plus AUCUNE autre page capable de chevaucher celle-ci.
+                dom.docRenderer.appendChild(pagesWord[i]);
 
-                // CORRECTION 4 : Un délai de 250ms à chaque page pour que le "Reflow" CSS soit 100% fini.
-                await new Promise(r => setTimeout(r, 250));
+                // 2. On attend un peu que la page se dessine seule
+                await new Promise(r => setTimeout(r, 150));
 
+                // 3. Capture HD
                 const canvas = await html2canvas(pagesWord[i], {
                     scale: 2.0, 
                     useCORS: true,
@@ -240,7 +242,11 @@ async function processFile(f) {
                 const imgData = canvas.toDataURL('image/jpeg', 0.80);
                 const imgHeight = (canvas.height * pdfW) / canvas.width;
                 pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgHeight);
+
+                // 4. On retire la page qu'on vient de capturer pour faire place nette à la suivante
+                pagesWord[i].remove();
             }
+            // ------ FIN DU FIX ------
 
             els.stat.innerText = `4/4 Finalisation...`;
             outBlob = pdf.output('blob');
