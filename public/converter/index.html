@@ -7,13 +7,10 @@
     
     <script src="tailwind.js"></script>
     <script src="jszip.js"></script>
-    
     <script src="docx-preview.js"></script>
     <script src="html2canvas.js"></script>
     <script src="jspdf.js"></script>
-    
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
-    
     <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
     
     <link rel="stylesheet" href="style.css">
@@ -65,9 +62,9 @@
         
         <input type="file" id="file-upload" class="hidden" multiple>
 
-        <div id="doc-renderer" class="hidden" style="position:fixed; top:0; left:0; width:100%; height:100%; z-index:50; background:white; overflow-y:auto; padding: 20px;">
-            <div id="doc-content" style="background:white; margin: auto; max-width: 210mm;"></div>
-        </div>
+        <div id="doc-renderer" style="position:fixed; left:-9999px; top:0; visibility:hidden;"></div>
+        
+        <div id="staging-area" style="position:fixed; top:0; left:0; width: 210mm; background:white; z-index: -100; overflow:hidden;"></div>
     </main>
     
     <script>
