@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { margin: '10' }
+    doc:   { margin: '0' } // Marge gérée par le découpage
 };
 
 let files = [];
@@ -25,9 +25,23 @@ const dom = {
     status: document.getElementById('engine-status'),
     convertBtn: document.getElementById('convert-all-btn'),
     downloadAllBtn: document.getElementById('download-all-btn'),
-    docRenderer: document.getElementById('doc-renderer'),
-    docContent: document.getElementById('doc-content')
+    // Note: Assure-toi que dans ton index.html tu as bien cet ID
+    docRenderer: document.getElementById('doc-renderer') || createFallbackRenderer()
 };
+
+// Sécurité si le div manque
+function createFallbackRenderer() {
+    const div = document.createElement('div');
+    div.id = 'doc-renderer';
+    div.className = 'hidden';
+    div.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; z-index:50; background:white; overflow-y:auto; padding:0;';
+    const content = document.createElement('div');
+    content.id = 'doc-content';
+    content.style.cssText = 'background:white; margin:auto;';
+    div.appendChild(content);
+    document.body.appendChild(div);
+    return div;
+}
 
 // --- INIT ENGINE ---
 async function initFFmpeg() {
@@ -38,7 +52,6 @@ async function initFFmpeg() {
         dom.status.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span> Engine Ready`;
     } catch (e) {
         console.error("FFmpeg error:", e);
-        dom.status.innerHTML = "Engine Error (Check Console)";
     }
 }
 initFFmpeg();
@@ -91,7 +104,6 @@ function renderCard(id, file, type, defaultTarget) {
     
     const iconMap = { video: '🎬', audio: '🎵', image: '🖼️', doc: '📝' };
     const fmtOpts = FORMATS[type].map(f => `<option value="${f}" ${f === defaultTarget ? 'selected' : ''}>${f.toUpperCase()}</option>`).join('');
-
     let settingsHTML = '';
     
     if (type === 'video') {
@@ -106,9 +118,8 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `
-             <select onchange="updateSet('${id}', 'margin', this.value)" class="opt-input"><option value="10">Marge Normale</option><option value="0">Sans Marge</option></select>
-        `;
+        // Doc options simplifiées car le découpage est automatique
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Auto-slice A4 Enabled</div>`;
     }
 
     div.innerHTML = `
@@ -175,66 +186,85 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> VISIBLE RENDER -> PDF ---
+        // --- 1. DOCX -> DECOUPAGE INTELLIGENT -> PDF ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
+            const contentDiv = document.getElementById('doc-content');
             
-            // 1. AFFICHER LA ZONE DE RENDU (PLEIN ÉCRAN)
+            // 1. Afficher
             dom.docRenderer.classList.remove('hidden');
-            dom.docContent.innerHTML = "";
-            dom.docContent.style.width = "210mm"; // Force A4 width
+            contentDiv.innerHTML = "";
+            contentDiv.style.width = "210mm"; // Largeur A4 fixe
             
-            // 2. RENDU WORD
-            await docx.renderAsync(arrayBuffer, dom.docContent, null, { 
+            // 2. Rendu Docx
+            await docx.renderAsync(arrayBuffer, contentDiv, null, { 
                 inWrapper: true, 
-                ignoreWidth: false,
+                ignoreWidth: false, 
                 renderHeaders: true, 
-                renderFooters: true
+                renderFooters: true 
             });
 
-            // 3. PAUSE POUR LES IMAGES (Critique pour éviter le PDF vide)
+            // 3. Pause rendu
             els.stat.innerText = "Rendering Layout...";
-            await new Promise(r => setTimeout(r, 1500)); 
+            await new Promise(r => setTimeout(r, 1500));
 
-            // 4. CAPTURE
-            const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF('p', 'mm', 'a4');
-            const pageWidth = 210;
-            const margin = parseInt(f.settings.margin) || 10;
-
-            // Capture via html2canvas
-            // On capture specifiquement le wrapper généré par la lib
-            const wrapper = dom.docContent.querySelector('.docx-wrapper') || dom.docContent;
-            
-            const canvas = await html2canvas(wrapper, {
-                scale: 2, 
+            // 4. Capture du canvas GEANT
+            const wrapper = contentDiv.querySelector('.docx-wrapper') || contentDiv;
+            const fullCanvas = await html2canvas(wrapper, {
+                scale: 2, // Haute qualité
                 useCORS: true,
                 allowTaint: true,
-                backgroundColor: "#ffffff",
-                windowWidth: wrapper.scrollWidth,
-                windowHeight: wrapper.scrollHeight
+                backgroundColor: "#ffffff"
             });
 
-            const imgData = canvas.toDataURL('image/jpeg', 0.90);
-            const imgHeight = (canvas.height * pageWidth) / canvas.width;
+            // 5. DECOUPAGE (SLICING) POUR EVITER L'ERREUR 14400
+            els.stat.innerText = "Slicing Pages...";
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF('p', 'mm', 'a4');
             
-            // Pour l'instant, on colle tout sur une page très longue ou on redimensionne
-            // Le PDF supporte des pages longues, mais A4 coupe.
-            // On va adapter la hauteur de la page PDF à l'image pour tout garder.
+            const pdfW = 210; 
+            const pdfH = 297; 
             
-            // Si l'image est plus grande que A4, on redimensionne le PDF (mode continu)
-            if (imgHeight > 297) {
-                 const longPdf = new jsPDF('p', 'mm', [pageWidth, imgHeight]);
-                 longPdf.addImage(imgData, 'JPEG', 0, 0, pageWidth, imgHeight);
-                 outBlob = longPdf.output('blob');
-            } else {
-                 pdf.addImage(imgData, 'JPEG', 0, 0, pageWidth, imgHeight);
-                 outBlob = pdf.output('blob');
+            // Calcul de la hauteur d'une page A4 en pixels du canvas
+            const pageHeightInCanvasPixels = Math.floor(fullCanvas.width * (pdfH / pdfW));
+            
+            let renderedHeight = 0;
+            const totalHeight = fullCanvas.height;
+
+            while (renderedHeight < totalHeight) {
+                if (renderedHeight > 0) pdf.addPage();
+
+                // Créer un canvas temporaire pour UNE page A4
+                const pageCanvas = document.createElement('canvas');
+                pageCanvas.width = fullCanvas.width;
+                // La hauteur est soit une page complète, soit le reste
+                const currentHeight = Math.min(pageHeightInCanvasPixels, totalHeight - renderedHeight);
+                pageCanvas.height = currentHeight;
+
+                const ctx = pageCanvas.getContext('2d');
+                
+                // On découpe : drawImage(source, x, y, w, h, x, y, w, h)
+                ctx.drawImage(
+                    fullCanvas, 
+                    0, renderedHeight, fullCanvas.width, currentHeight, 
+                    0, 0, fullCanvas.width, currentHeight
+                );
+
+                // Ajouter cette tranche au PDF
+                const imgData = pageCanvas.toDataURL('image/jpeg', 0.95);
+                // Calcul hauteur proportionnelle
+                const ratioH = (currentHeight * pdfW) / fullCanvas.width;
+                
+                pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, ratioH);
+                
+                renderedHeight += pageHeightInCanvasPixels;
             }
 
-            // 5. CACHER LE RENDU
+            outBlob = pdf.output('blob');
+            
+            // Nettoyage
             dom.docRenderer.classList.add('hidden');
-            dom.docContent.innerHTML = ""; 
+            contentDiv.innerHTML = ""; 
         }
         
         // --- 2. FFMPEG (Video/Image/Audio) ---
@@ -290,7 +320,6 @@ async function processFile(f) {
         els.stat.innerText = "Error";
         els.stat.className = "text-xs font-bold text-red-500 mt-1 text-right";
         showToast("Erreur conversion", true);
-        // Si erreur, on cache le renderer au cas où
         dom.docRenderer.classList.add('hidden');
     }
 }
