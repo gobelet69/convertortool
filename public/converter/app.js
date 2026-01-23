@@ -25,10 +25,11 @@ const dom = {
     status: document.getElementById('engine-status'),
     convertBtn: document.getElementById('convert-all-btn'),
     downloadAllBtn: document.getElementById('download-all-btn'),
-    hiddenRenderer: document.getElementById('hidden-renderer')
+    docRenderer: document.getElementById('doc-renderer'),
+    docContent: document.getElementById('doc-content')
 };
 
-// --- INIT MOTEURS ---
+// --- INIT ENGINE ---
 async function initFFmpeg() {
     try {
         ffmpeg = createFFmpeg({ log: false });
@@ -37,6 +38,7 @@ async function initFFmpeg() {
         dom.status.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span> Engine Ready`;
     } catch (e) {
         console.error("FFmpeg error:", e);
+        dom.status.innerHTML = "Engine Error (Check Console)";
     }
 }
 initFFmpeg();
@@ -173,49 +175,66 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> PDF (Fix Page Blanche) ---
+        // --- 1. DOCX -> VISIBLE RENDER -> PDF ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
             
-            // 1. On affiche le rendu (z-index positif pour être sûr qu'il est dessiné)
-            // Mais on le couvre avec un masque blanc si on veut, ou on le laisse z-index bas
-            // Ici: z-index -50 dans le HTML est bien, MAIS il faut une largeur définie.
-            dom.hiddenRenderer.innerHTML = "";
-            dom.hiddenRenderer.style.width = "210mm"; // Force A4 width
-            dom.hiddenRenderer.style.minHeight = "297mm"; // Force A4 height min
+            // 1. AFFICHER LA ZONE DE RENDU (PLEIN ÉCRAN)
+            dom.docRenderer.classList.remove('hidden');
+            dom.docContent.innerHTML = "";
+            dom.docContent.style.width = "210mm"; // Force A4 width
             
-            await docx.renderAsync(arrayBuffer, dom.hiddenRenderer, null, { 
-                inWrapper: false, 
+            // 2. RENDU WORD
+            await docx.renderAsync(arrayBuffer, dom.docContent, null, { 
+                inWrapper: true, 
                 ignoreWidth: false,
                 renderHeaders: true, 
                 renderFooters: true
             });
 
-            // 2. PAUSE CRITIQUE : Laisser le navigateur afficher les images/polices
-            els.stat.innerText = "Rendering...";
-            await new Promise(r => setTimeout(r, 1500)); // 1.5 secondes de pause
+            // 3. PAUSE POUR LES IMAGES (Critique pour éviter le PDF vide)
+            els.stat.innerText = "Rendering Layout...";
+            await new Promise(r => setTimeout(r, 1500)); 
 
-            // 3. CAPTURE
+            // 4. CAPTURE
             const { jsPDF } = window.jspdf;
-            
-            // html2canvas capture ce qui est dans le DOM
-            const canvas = await html2canvas(dom.hiddenRenderer, {
-                scale: 2, // Meilleure qualité
-                useCORS: true,
-                allowTaint: true,
-                scrollY: -window.scrollY // Fix décalage si on a scrollé
-            });
-
-            // 4. GENERATION PDF
-            const imgData = canvas.toDataURL('image/jpeg', 0.95);
             const pdf = new jsPDF('p', 'mm', 'a4');
             const pageWidth = 210;
+            const margin = parseInt(f.settings.margin) || 10;
+
+            // Capture via html2canvas
+            // On capture specifiquement le wrapper généré par la lib
+            const wrapper = dom.docContent.querySelector('.docx-wrapper') || dom.docContent;
+            
+            const canvas = await html2canvas(wrapper, {
+                scale: 2, 
+                useCORS: true,
+                allowTaint: true,
+                backgroundColor: "#ffffff",
+                windowWidth: wrapper.scrollWidth,
+                windowHeight: wrapper.scrollHeight
+            });
+
+            const imgData = canvas.toDataURL('image/jpeg', 0.90);
             const imgHeight = (canvas.height * pageWidth) / canvas.width;
             
-            pdf.addImage(imgData, 'JPEG', 0, 0, pageWidth, imgHeight);
+            // Pour l'instant, on colle tout sur une page très longue ou on redimensionne
+            // Le PDF supporte des pages longues, mais A4 coupe.
+            // On va adapter la hauteur de la page PDF à l'image pour tout garder.
             
-            outBlob = pdf.output('blob');
-            dom.hiddenRenderer.innerHTML = ""; // Nettoyage
+            // Si l'image est plus grande que A4, on redimensionne le PDF (mode continu)
+            if (imgHeight > 297) {
+                 const longPdf = new jsPDF('p', 'mm', [pageWidth, imgHeight]);
+                 longPdf.addImage(imgData, 'JPEG', 0, 0, pageWidth, imgHeight);
+                 outBlob = longPdf.output('blob');
+            } else {
+                 pdf.addImage(imgData, 'JPEG', 0, 0, pageWidth, imgHeight);
+                 outBlob = pdf.output('blob');
+            }
+
+            // 5. CACHER LE RENDU
+            dom.docRenderer.classList.add('hidden');
+            dom.docContent.innerHTML = ""; 
         }
         
         // --- 2. FFMPEG (Video/Image/Audio) ---
@@ -271,6 +290,8 @@ async function processFile(f) {
         els.stat.innerText = "Error";
         els.stat.className = "text-xs font-bold text-red-500 mt-1 text-right";
         showToast("Erreur conversion", true);
+        // Si erreur, on cache le renderer au cas où
+        dom.docRenderer.classList.add('hidden');
     }
 }
 
