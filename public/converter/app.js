@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { ocr: 'yes' }
+    doc:   { } // Plus d'options, mode Haute Qualité automatique
 };
 
 let files = [];
@@ -91,7 +91,6 @@ function renderCard(id, file, type, defaultTarget) {
     const fmtOpts = FORMATS[type].map(f => `<option value="${f}" ${f === defaultTarget ? 'selected' : ''}>${f.toUpperCase()}</option>`).join('');
 
     let settingsHTML = '';
-    
     if (type === 'video') {
         settingsHTML = `
             <select onchange="updateSet('${id}', 'res', this.value)" class="opt-input"><option value="original">Orig Res</option><option value="1080">1080p</option><option value="720">720p</option></select>
@@ -104,12 +103,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `
-            <select onchange="updateSet('${id}', 'ocr', this.value)" class="opt-input">
-                <option value="yes">With OCR (Searchable text)</option>
-                <option value="no">Fast Mode (Images only)</option>
-            </select>
-        `;
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Capture HD (Exact Match)</div>`;
     }
 
     div.innerHTML = `
@@ -176,81 +170,57 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> INVISIBLE & PERFECT RENDER -> PDF ---
+        // --- 1. DOCX -> CAPTURE ECRAN HD PURE ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
             
-            // 1. Rendu hors écran (left: -9999px)
+            // 1. Rendu hors écran (left: -9999px pour ne rien voir clignoter)
             dom.docRenderer.innerHTML = "";
             await docx.renderAsync(arrayBuffer, dom.docRenderer, null, { 
                 inWrapper: false, 
                 ignoreWidth: false 
             });
 
-            // 2. Récupérer les pages originales (PAS DE CLONAGE)
-            const pages = Array.from(dom.docRenderer.querySelectorAll('.docx'));
-            const totalPages = pages.length;
+            // docx-preview crée une balise <section class="docx"> par page Word
+            const pagesWord = Array.from(dom.docRenderer.querySelectorAll('.docx'));
+            const totalPages = pagesWord.length;
 
-            els.stat.innerText = `Preparing ${totalPages} pages...`;
+            els.stat.innerText = `Loading ${totalPages} pages...`;
+            // Attente pour que les polices et images se chargent bien dans le DOM
             await new Promise(r => setTimeout(r, 1000));
 
             const { jsPDF } = window.jspdf;
             const pdf = new jsPDF('p', 'mm', 'a4');
-            const pdfW = 210;
-            const pdfH = 297;
+            const pdfW = 210; // Largeur A4 mm
+            const pdfH = 297; // Hauteur A4 mm
 
-            // INIT OCR
-            let worker = null;
-            if (f.settings.ocr === 'yes') {
-                els.stat.innerText = "Loading OCR AI...";
-                worker = await Tesseract.createWorker('fra+eng');
-            }
-
-            // 3. BOUCLE DE CAPTURE (Masquage Dynamique)
+            // 2. BOUCLE : 1 ELEMENT WORD = 1 CAPTURE = 1 PAGE PDF
             for (let i = 0; i < totalPages; i++) {
-                els.stat.innerText = `Processing Page ${i + 1} of ${totalPages}...`;
+                els.stat.innerText = `Capturing Page ${i + 1} of ${totalPages}...`;
                 els.bar.style.width = `${((i + 1) / totalPages) * 100}%`;
 
-                // A. On cache toutes les pages, sauf la page actuelle
-                pages.forEach((p, idx) => {
-                    p.style.display = idx === i ? 'block' : 'none';
-                });
+                if (i > 0) pdf.addPage();
 
-                // B. On force la taille de la page actuelle
-                const currentPage = pages[i];
-                currentPage.style.minHeight = "1122px"; // Hauteur A4 en pixels
-
-                // C. Capture de la page
-                const canvas = await html2canvas(currentPage, {
-                    scale: 2.0, 
+                // Capture de l'élément spécifique (la page Word)
+                // scale: 3 garantit une netteté absolue (Haute Définition)
+                const canvas = await html2canvas(pagesWord[i], {
+                    scale: 3.0, 
                     useCORS: true,
                     backgroundColor: "#ffffff",
-                    windowWidth: currentPage.scrollWidth,
-                    windowHeight: currentPage.scrollHeight
+                    windowWidth: pagesWord[i].scrollWidth,
+                    windowHeight: pagesWord[i].scrollHeight
                 });
 
-                if (i > 0) pdf.addPage();
-                const imgData = canvas.toDataURL('image/jpeg', 0.95);
+                // On transforme le canvas en image
+                const imgData = canvas.toDataURL('image/jpeg', 0.98);
                 
-                // Maintien strict du ratio d'aspect pour éviter l'écrasement
-                const imgHeight = (canvas.height * pdfW) / canvas.width;
-                pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgHeight);
-
-                // D. OCR
-                if (worker) {
-                    const { data: { text } } = await worker.recognize(canvas);
-                    if (text && text.trim().length > 0) {
-                        pdf.setFontSize(8);
-                        pdf.setTextColor(255, 255, 255);
-                        pdf.text(text, 10, 10, { maxWidth: pdfW - 20 });
-                    }
-                }
+                // MAGIE : On colle l'image aux coordonnées (0,0) avec la largeur et hauteur exacte du PDF
+                // Cela reproduit la méthode "Capture d'écran Full Screen" que tu as demandée.
+                pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH);
             }
 
-            // Fin et Nettoyage
-            if (worker) await worker.terminate();
             outBlob = pdf.output('blob');
-            dom.docRenderer.innerHTML = ""; 
+            dom.docRenderer.innerHTML = ""; // Nettoyage
         }
         
         // --- 2. FFMPEG (Video/Image/Audio) ---

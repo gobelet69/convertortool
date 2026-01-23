@@ -10,7 +10,6 @@
     <script src="docx-preview.js"></script>
     <script src="html2canvas.js"></script>
     <script src="jspdf.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
     <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
     
     <link rel="stylesheet" href="style.css">
@@ -62,7 +61,7 @@
         
         <input type="file" id="file-upload" class="hidden" multiple>
 
-        <div id="doc-renderer" style="position:absolute; left:-9999px; top:0; width:210mm; background:white;"></div>
+        <div id="doc-renderer" style="position:fixed; left:-9999px; top:0; width: 210mm; background:white;"></div>
     </main>
     
     <script>
