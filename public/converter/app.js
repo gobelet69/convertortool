@@ -1,5 +1,6 @@
 // --- CONFIGURATION ---
 const { createFFmpeg, fetchFile } = FFmpeg;
+const { PDFDocument, rgb, StandardFonts } = PDFLib; // Import de PDF-Lib
 let ffmpeg = null;
 
 const FORMATS = {
@@ -13,7 +14,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { } // Mode automatique compressé
+    doc:   { } 
 };
 
 let files = [];
@@ -24,8 +25,7 @@ const dom = {
     empty: document.getElementById('empty-state'),
     status: document.getElementById('engine-status'),
     convertBtn: document.getElementById('convert-all-btn'),
-    downloadAllBtn: document.getElementById('download-all-btn'),
-    docRenderer: document.getElementById('doc-renderer')
+    downloadAllBtn: document.getElementById('download-all-btn')
 };
 
 // --- INIT ENGINE ---
@@ -103,7 +103,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Auto-Pagination & Compression (DEBUG ON)</div>`;
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Native PDF-Lib Generation</div>`;
     }
 
     div.innerHTML = `
@@ -156,6 +156,27 @@ async function convertAll() {
     checkIfAllDone();
 }
 
+// --- FONCTION UTILITAIRE : WRAPPER DE TEXTE POUR PDF ---
+// Permet de couper le texte pour qu'il ne dépasse pas la page
+function wrapText(text, maxWidth, font, fontSize) {
+    const words = text.split(' ');
+    let lines = [];
+    let currentLine = words[0];
+
+    for (let i = 1; i < words.length; i++) {
+        const word = words[i];
+        const width = font.widthOfTextAtSize(currentLine + " " + word, fontSize);
+        if (width < maxWidth) {
+            currentLine += " " + word;
+        } else {
+            lines.push(currentLine);
+            currentLine = word;
+        }
+    }
+    lines.push(currentLine);
+    return lines;
+}
+
 // --- COEUR DE TRAITEMENT ---
 async function processFile(f) {
     const els = {
@@ -172,71 +193,70 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> COMPRESSION + PAGINATION AUTO + BASE64 IMAGES + DEBUG ---
+        // --- 1. DOCX -> MAMMOTH + PDF-LIB NATIVE ---
         if (f.type === 'doc') {
-            console.log(`\n--- TRAITEMENT DOCX : ${f.file.name} ---`);
+            els.stat.innerText = "1/3 Extraction texte (Mammoth)...";
+            els.bar.style.width = "30%";
             
-            console.log("1. Lecture du fichier en mémoire...");
-            els.stat.innerText = "1/4 Lecture mémoire...";
             const arrayBuffer = await f.file.arrayBuffer();
             
-            // --- FIX DE LA PAGE BLANCHE : RAMENER LE RENDERER SOUS L'ÉCRAN ---
-            // On vide la zone, on définit sa largeur, et on la ramène sur l'écran (left: 0)
-            // avec un z-index négatif pour qu'elle reste invisible pour l'utilisateur
-            dom.docRenderer.innerHTML = "";
-            dom.docRenderer.style.width = "210mm";
-            dom.docRenderer.style.left = "0px";
-            dom.docRenderer.style.zIndex = "-10"; 
+            // ÉTAPE A : Extraction du texte pur avec Mammoth
+            const mammothResult = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+            const extractedText = mammothResult.value;
+
+            els.stat.innerText = "2/3 Génération PDF Natif...";
+            els.bar.style.width = "70%";
+
+            // ÉTAPE B : Création du PDF natif avec PDF-Lib
+            const pdfDoc = await PDFDocument.create();
+            const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+            const fontSize = 11;
+            const lineHeight = 14;
+            const margin = 50;
+            const maxWidth = 595.28 - (margin * 2); // Largeur A4 en points - marges
             
-            console.log("2. Rendu DOCX (docx-preview)...");
-            els.stat.innerText = "2/4 Rendu HTML...";
-            // Rendu Word pur avec base64 pour ne pas faire planter les images
-            await docx.renderAsync(arrayBuffer, dom.docRenderer, null, { 
-                inWrapper: false, 
-                ignoreWidth: false,
-                useBase64URL: true 
-            });
+            // Séparer les paragraphes
+            const paragraphs = extractedText.split('\n');
+            
+            let page = pdfDoc.addPage();
+            const { height } = page.getSize();
+            let yPosition = height - margin;
 
-            console.log("✅ Rendu terminé. Mise en pause de 1s pour laisser le navigateur charger les images...");
-            els.stat.innerText = `3/4 Traitement images...`;
-            await new Promise(r => setTimeout(r, 1000)); 
-
-            // --- DEBUT DU CORRECTIF : NETTOYAGE DES IMAGES NON SUPPORTÉES ---
-            console.log("3.5 Nettoyage des images non supportées (EPS/WMF/Octet-stream)...");
-            const docImages = dom.docRenderer.getElementsByTagName('img');
-            for (let img of docImages) {
-                // Vérifier si la source de l'image est un flux brut ou un format vectoriel Microsoft obsolète
-                if (img.src.includes('application/octet-stream') || 
-                    img.src.includes('image/x-wmf') || 
-                    img.src.includes('image/x-emf')) {
-                    console.warn("⚠️ Image non supportée détectée et masquée pour la conversion.");
-                    // Cacher l'image pour que html2canvas ne plante pas
-                    img.style.display = 'none'; 
+            // Dessiner chaque ligne intelligemment (Pagination auto)
+            for (const paragraph of paragraphs) {
+                if (paragraph.trim() === '') {
+                    yPosition -= lineHeight; // Saut de ligne
+                    continue;
                 }
+
+                const lines = wrapText(paragraph, maxWidth, font, fontSize);
+
+                for (const line of lines) {
+                    if (yPosition < margin) {
+                        page = pdfDoc.addPage();
+                        yPosition = height - margin;
+                    }
+
+                    page.drawText(line, {
+                        x: margin,
+                        y: yPosition,
+                        size: fontSize,
+                        font: font,
+                        color: rgb(0, 0, 0),
+                    });
+                    yPosition -= lineHeight;
+                }
+                yPosition -= lineHeight / 2; // Espace après paragraphe
             }
-            // --- FIN DU CORRECTIF ---
 
-            console.log("3. Configuration de html2pdf (Compression + Pagination)...");
-            // OPTIONS DE COMPRESSION + PAGINATION 1-pour-1
-            const opt = {
-                margin: 0, 
-                filename: f.file.name.replace('.docx', '.pdf'),
-                image: { type: 'jpeg', quality: 0.75 }, 
-                html2canvas: { scale: 1.5, useCORS: true }, 
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
-                pagebreak: { mode: 'css', before: '.docx' } 
-            };
+            els.stat.innerText = "3/3 Enregistrement...";
+            els.bar.style.width = "100%";
 
-            console.log("4. Lancement de la capture PDF (C'est l'étape la plus lourde)...");
-            els.stat.innerText = `4/4 Génération PDF...`;
+            // ÉTAPE C : Sauvegarde en octets
+            const pdfBytes = await pdfDoc.save();
+            outBlob = new Blob([pdfBytes], { type: 'application/pdf' });
             
-            outBlob = await html2pdf().set(opt).from(dom.docRenderer).output('blob');
-            
-            console.log(`✅ PDF Généré avec succès ! Poids compressé : ${(outBlob.size / 1024 / 1024).toFixed(2)} MB`);
-            
-            // --- FIX DE LA PAGE BLANCHE : RENVOYER LE RENDERER HORS ÉCRAN ---
-            dom.docRenderer.innerHTML = ""; 
-            dom.docRenderer.style.left = "-9999px"; 
+            console.log(`✅ PDF Natif Généré ! Poids : ${(outBlob.size / 1024).toFixed(2)} KB (Ultra-léger)`);
         }
         
         // --- 2. FFMPEG (Video/Image/Audio) ---
@@ -288,11 +308,10 @@ async function processFile(f) {
         `;
 
     } catch (err) {
-        // --- ZONE DE CRASH / DEBUG ---
         console.error("❌ ERREUR CRITIQUE PENDANT LA CONVERSION :", err);
         els.stat.innerText = "Error (Voir Console)";
         els.stat.className = "text-xs font-bold text-red-500 mt-1 text-right";
-        showToast("Erreur conversion : Regarde la console (F12)", true);
+        showToast("Erreur conversion : Regarde la console", true);
     }
 }
 
