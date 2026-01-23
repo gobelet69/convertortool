@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { } // LibreOffice gère automatiquement la fidélité native
+    doc:   { } // Mode Auto-Pagination & Compression
 };
 
 let files = [];
@@ -24,7 +24,8 @@ const dom = {
     empty: document.getElementById('empty-state'),
     status: document.getElementById('engine-status'),
     convertBtn: document.getElementById('convert-all-btn'),
-    downloadAllBtn: document.getElementById('download-all-btn')
+    downloadAllBtn: document.getElementById('download-all-btn'),
+    docRenderer: document.getElementById('doc-renderer')
 };
 
 // --- INIT ENGINE ---
@@ -102,7 +103,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: LibreOffice WebAssembly (via CDN)</div>`;
+        settingsHTML = `<div class="text-xs text-slate-400 italic mt-2">Mode: Auto-Pagination & Compression (DEBUG ON)</div>`;
     }
 
     div.innerHTML = `
@@ -171,25 +172,50 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> LIBREOFFICE WASM (HAUTE FIDÉLITÉ VIA CDN) ---
+        // --- 1. DOCX -> COMPRESSION + PAGINATION AUTO + BASE64 IMAGES ---
         if (f.type === 'doc') {
-            console.log(`\n--- TRAITEMENT DOCX (LibreOffice) : ${f.file.name} ---`);
+            console.log(`\n--- TRAITEMENT DOCX : ${f.file.name} ---`);
             
-            els.stat.innerText = "1/2 Chargement LibreOffice (Long la 1ère fois)...";
-            els.bar.style.width = "40%";
+            console.log("1. Lecture du fichier en mémoire...");
+            els.stat.innerText = "1/4 Lecture mémoire...";
+            const arrayBuffer = await f.file.arrayBuffer();
             
-            // 💡 IMPORT DU MODULE NAVIGATEUR (qui pointe vers le CDN déclaré dans index.html)
-            const { soffice } = await import('libreoffice-wasm');
+            // On vide la zone cachée
+            dom.docRenderer.innerHTML = "";
+            dom.docRenderer.style.width = "210mm";
+            
+            console.log("2. Rendu DOCX (docx-preview)...");
+            els.stat.innerText = "2/4 Rendu HTML...";
+            
+            // Rendu Word pur avec base64 pour ne pas faire planter les images
+            await docx.renderAsync(arrayBuffer, dom.docRenderer, null, { 
+                inWrapper: false, 
+                ignoreWidth: false,
+                useBase64URL: true 
+            });
 
-            els.stat.innerText = "2/2 Conversion de haute fidélité en cours...";
-            els.bar.style.width = "80%";
+            console.log("✅ Rendu terminé. Mise en pause de 1s pour laisser le navigateur charger les images...");
+            els.stat.innerText = `3/4 Traitement images...`;
+            await new Promise(r => setTimeout(r, 1000)); 
 
-            // 💡 CONVERSION NATIVE (Appel de la fonction compilée)
-            outBlob = await soffice.convertToPdf(f.file);
+            console.log("3. Configuration de html2pdf (Compression + Pagination)...");
+            // OPTIONS DE COMPRESSION + PAGINATION 1-pour-1
+            const opt = {
+                margin: 0, 
+                filename: f.file.name.replace('.docx', '.pdf'),
+                image: { type: 'jpeg', quality: 0.75 }, 
+                html2canvas: { scale: 1.5, useCORS: true }, 
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
+                pagebreak: { mode: 'css', before: '.docx' } 
+            };
 
-            els.stat.innerText = "Finalisation...";
-            els.bar.style.width = "100%";
-            console.log(`✅ PDF Haute Fidélité Généré ! Poids : ${(outBlob.size / 1024 / 1024).toFixed(2)} MB`);
+            console.log("4. Lancement de la capture PDF...");
+            els.stat.innerText = `4/4 Génération PDF...`;
+            
+            outBlob = await html2pdf().set(opt).from(dom.docRenderer).output('blob');
+            
+            console.log(`✅ PDF Généré avec succès ! Poids compressé : ${(outBlob.size / 1024 / 1024).toFixed(2)} MB`);
+            dom.docRenderer.innerHTML = ""; 
         }
         
         // --- 2. FFMPEG (Video/Image/Audio) ---
@@ -241,6 +267,7 @@ async function processFile(f) {
         `;
 
     } catch (err) {
+        // --- ZONE DE CRASH / DEBUG ---
         console.error("❌ ERREUR CRITIQUE PENDANT LA CONVERSION :", err);
         els.stat.innerText = "Error (Voir Console)";
         els.stat.className = "text-xs font-bold text-red-500 mt-1 text-right";
