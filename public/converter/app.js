@@ -13,7 +13,7 @@ const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
     image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { } 
+    doc:   { } // Mode Isolation Stricte (Anti-Crash)
 };
 
 let files = [];
@@ -103,7 +103,7 @@ function renderCard(id, file, type, defaultTarget) {
             <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
         `;
     } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 font-bold mt-2">Mode: Découpage Millimétrique (100% Sûr)</div>`;
+        settingsHTML = `<div class="text-xs text-slate-400 font-bold mt-2">Mode: Isolation Stricte (Anti-Crash)</div>`;
     }
 
     div.innerHTML = `
@@ -172,7 +172,7 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> CAPTURE GEANTE UNIQUE + DECOUPAGE ---
+        // --- 1. DOCX -> ISOLATION STRICTE DES PAGES (1 PAR 1) ---
         if (f.type === 'doc') {
             console.log(`\n--- TRAITEMENT DOCX : ${f.file.name} ---`);
             els.stat.innerText = "1/4 Lecture DOCX...";
@@ -182,78 +182,71 @@ async function processFile(f) {
             dom.docRenderer.innerHTML = "";
             dom.docRenderer.style.width = "210mm";
             
-            console.log("2. Rendu DOCX en HTML (Mode Continu)...");
+            console.log("2. Rendu DOCX temporaire...");
             els.stat.innerText = "2/4 Rendu HTML...";
             
-            // On désactive le wrapper de fond gris pour n'avoir qu'une seule longue feuille blanche continue
             await docx.renderAsync(arrayBuffer, dom.docRenderer, null, { 
                 inWrapper: false, 
                 ignoreWidth: false,
                 useBase64URL: true 
             });
 
-            const pagesWord = Array.from(dom.docRenderer.querySelectorAll('.docx'));
-            const totalPages = pagesWord.length;
+            // On retire le formatage qui faisait bugger la librairie (les ligatures)
+            dom.docRenderer.style.fontVariantLigatures = "none";
 
-            console.log(`✅ ${totalPages} pages affichées. On bloque tout mouvement du DOM.`);
-            els.stat.innerText = `3/4 Capture Globale...`;
-            
-            await document.fonts.ready; 
-            await new Promise(r => setTimeout(r, 1000)); // Pause pour tout figer
-            window.scrollTo(0, 0);
+            // On récupère TOUTES les pages et on compte le vrai nombre de pages (ex: 46)
+            const allPages = Array.from(dom.docRenderer.querySelectorAll('.docx'));
+            const totalPages = allPages.length;
 
-            // ---------------------------------------------------------
-            // METHODE "GIANT SNAPSHOT" (Bande de Cinéma)
-            // ---------------------------------------------------------
-            console.log("3. Prise de la photo géante (Cela peut prendre quelques secondes)...");
-            
-            // On prend UNE SEULE capture de tout le conteneur
-            const giantCanvas = await html2canvas(dom.docRenderer, {
-                scale: 1.5, // 1.5 suffit pour être net et évite de saturer la mémoire RAM
-                useCORS: true,
-                backgroundColor: "#ffffff",
-                logging: false
-            });
+            console.log(`✅ ${totalPages} pages détectées. Mise en mémoire cache...`);
+            els.stat.innerText = `3/4 Traitement de ${totalPages} pages...`;
 
-            console.log("✅ Photo géante capturée. Découpage en cours...");
-            els.stat.innerText = `4/4 Découpage & PDF...`;
+            // L'ETAPE CRUCIALE POUR EVITER LE CRASH ET LE CHEVAUCHEMENT :
+            // On vide le conteneur visuel du navigateur !
+            dom.docRenderer.innerHTML = ""; 
 
             const { jsPDF } = window.jspdf;
             const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true });
             const pdfW = 210;
-            const pdfH = 297;
 
-            // Mathématique pure : Calcul de la hauteur d'une feuille A4 en pixels (selon l'image géante)
-            const a4HeightInPixels = (giantCanvas.width * pdfH) / pdfW;
-            let currentY = 0; // Position des ciseaux virtuels
+            console.log("3. Capture Page par Page (Le navigateur ne charge qu'une page à la fois)...");
 
-            // On boucle autant de fois qu'il y a de pages
             for (let i = 0; i < totalPages; i++) {
+                els.stat.innerText = `Capture Page ${i + 1}/${totalPages}...`;
                 els.bar.style.width = `${((i + 1) / totalPages) * 100}%`;
+
                 if (i > 0) pdf.addPage();
 
-                // On crée une petite toile de la taille d'une page
-                const pageCanvas = document.createElement('canvas');
-                pageCanvas.width = giantCanvas.width;
-                pageCanvas.height = a4HeightInPixels;
-                const ctx = pageCanvas.getContext('2d');
+                // 1. On injecte SEULEMENT la page actuelle. Elle est physiquement seule sur l'écran.
+                dom.docRenderer.appendChild(allPages[i]);
 
-                // On "glisse" l'image géante vers le haut pour copier le bon morceau
-                ctx.drawImage(giantCanvas, 0, -currentY);
+                // 2. Pause pour laisser le navigateur dessiner la page proprement
+                await new Promise(r => setTimeout(r, 150));
 
-                // On convertit le morceau en JPEG léger
-                const imgData = pageCanvas.toDataURL('image/jpeg', 0.80);
-                pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH);
+                // 3. On prend la photo (le navigateur n'a besoin de mémoire que pour une seule page A4)
+                const canvas = await html2canvas(allPages[i], {
+                    scale: 2.0, 
+                    useCORS: true,
+                    backgroundColor: "#ffffff",
+                    scrollX: 0,
+                    scrollY: 0,
+                    logging: false
+                });
 
-                // On descend les ciseaux pour la page suivante
-                currentY += a4HeightInPixels;
+                const imgData = canvas.toDataURL('image/jpeg', 0.80);
+                const imgHeight = (canvas.height * pdfW) / canvas.width;
+                pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgHeight);
+
+                // 4. On détruit la page visuelle pour faire place nette à la suivante
+                dom.docRenderer.innerHTML = ""; 
             }
 
+            console.log("4. Compilation du fichier PDF...");
+            els.stat.innerText = `4/4 Finalisation...`;
             outBlob = pdf.output('blob');
-            console.log(`✅ PDF Terminé ! Poids final : ${(outBlob.size / 1024 / 1024).toFixed(2)} MB`);
             
+            console.log(`✅ PDF Terminé ! Poids final : ${(outBlob.size / 1024 / 1024).toFixed(2)} MB`);
             dom.docRenderer.classList.add('hidden');
-            dom.docRenderer.innerHTML = ""; 
         }
         
         // --- 2. FFMPEG (Video/Image/Audio) - INCHANGE ---
