@@ -28,7 +28,7 @@ const dom = {
     hiddenRenderer: document.getElementById('hidden-renderer')
 };
 
-// --- INIT ENGINE ---
+// --- INIT MOTEURS ---
 async function initFFmpeg() {
     try {
         ffmpeg = createFFmpeg({ log: false });
@@ -37,7 +37,6 @@ async function initFFmpeg() {
         dom.status.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span> Engine Ready`;
     } catch (e) {
         console.error("FFmpeg error:", e);
-        dom.status.innerHTML = "Engine Error (Check Console)";
     }
 }
 initFFmpeg();
@@ -106,7 +105,7 @@ function renderCard(id, file, type, defaultTarget) {
         `;
     } else if (type === 'doc') {
         settingsHTML = `
-             <select onchange="updateSet('${id}', 'margin', this.value)" class="opt-input"><option value="10">Marge Normale</option><option value="0">Sans Marge</option><option value="20">Marge Large</option></select>
+             <select onchange="updateSet('${id}', 'margin', this.value)" class="opt-input"><option value="10">Marge Normale</option><option value="0">Sans Marge</option></select>
         `;
     }
 
@@ -145,7 +144,7 @@ function removeFile(id) {
 }
 
 async function convertAll() {
-    if(!ffmpeg && files.some(f => f.type !== 'doc')) return alert("Engine loading...");
+    if(!ffmpeg && files.some(f => f.type !== 'doc')) return alert("Video engine loading...");
     dom.convertBtn.disabled = true;
     dom.convertBtn.innerHTML = `<span class="spin inline-block mr-2">↻</span> Processing...`;
 
@@ -174,55 +173,52 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // 1. DOCX -> IMAGE CAPTURE -> PDF
+        // --- 1. DOCX -> PDF (Fix Page Blanche) ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
+            
+            // 1. On affiche le rendu (z-index positif pour être sûr qu'il est dessiné)
+            // Mais on le couvre avec un masque blanc si on veut, ou on le laisse z-index bas
+            // Ici: z-index -50 dans le HTML est bien, MAIS il faut une largeur définie.
             dom.hiddenRenderer.innerHTML = "";
+            dom.hiddenRenderer.style.width = "210mm"; // Force A4 width
+            dom.hiddenRenderer.style.minHeight = "297mm"; // Force A4 height min
             
-            // Rendu Word
             await docx.renderAsync(arrayBuffer, dom.hiddenRenderer, null, { 
-                inWrapper: false, ignoreWidth: false, renderHeaders: true, renderFooters: true
+                inWrapper: false, 
+                ignoreWidth: false,
+                renderHeaders: true, 
+                renderFooters: true
             });
-            
-            // Délai pour les images
-            await new Promise(r => setTimeout(r, 800));
-            els.stat.innerText = "Rendering PDF...";
 
-            // Configuration jsPDF
+            // 2. PAUSE CRITIQUE : Laisser le navigateur afficher les images/polices
+            els.stat.innerText = "Rendering...";
+            await new Promise(r => setTimeout(r, 1500)); // 1.5 secondes de pause
+
+            // 3. CAPTURE
             const { jsPDF } = window.jspdf;
+            
+            // html2canvas capture ce qui est dans le DOM
+            const canvas = await html2canvas(dom.hiddenRenderer, {
+                scale: 2, // Meilleure qualité
+                useCORS: true,
+                allowTaint: true,
+                scrollY: -window.scrollY // Fix décalage si on a scrollé
+            });
+
+            // 4. GENERATION PDF
+            const imgData = canvas.toDataURL('image/jpeg', 0.95);
             const pdf = new jsPDF('p', 'mm', 'a4');
             const pageWidth = 210;
-            const pageHeight = 297;
-            const margin = parseInt(f.settings.margin) || 10;
-
-            // Capture via html2canvas
-            const canvas = await html2canvas(dom.hiddenRenderer, {
-                scale: 2, // Haute qualité
-                useCORS: true,
-                backgroundColor: "#ffffff"
-            });
-
-            const imgData = canvas.toDataURL('image/jpeg', 0.98);
+            const imgHeight = (canvas.height * pageWidth) / canvas.width;
             
-            // Calcul du ratio pour faire tenir dans A4
-            const imgWidth = pageWidth - (margin * 2); 
-            const imgHeight = (canvas.height * imgWidth) / canvas.width;
-            
-            // Ajout de l'image au PDF (avec gestion multi-pages simple si besoin, ici page 1)
-            // Pour un vrai multi-page, il faudrait boucler sur la hauteur, mais commençons simple.
-            // docx-preview rend tout dans un seul long div.
-            
-            let heightLeft = imgHeight;
-            let position = margin;
-            
-            // Première page
-            pdf.addImage(imgData, 'JPEG', margin, margin, imgWidth, imgHeight);
+            pdf.addImage(imgData, 'JPEG', 0, 0, pageWidth, imgHeight);
             
             outBlob = pdf.output('blob');
-            dom.hiddenRenderer.innerHTML = "";
+            dom.hiddenRenderer.innerHTML = ""; // Nettoyage
         }
         
-        // 2. FFMPEG
+        // --- 2. FFMPEG (Video/Image/Audio) ---
         else {
             const inName = `in_${f.id}.${f.file.name.split('.').pop()}`;
             const outName = `out_${f.id}.${f.target}`;
@@ -245,6 +241,7 @@ async function processFile(f) {
                 if (s.scale !== '100') filters.push(`scale=iw*${s.scale/100}:-1`);
                 if (s.gray === 'yes') filters.push('hue=s=0');
                 if(filters.length > 0) args.push('-vf', filters.join(','));
+                
                 if(f.target === 'jpg' || f.target === 'jpeg') {
                     let q = s.qual === '90' ? 2 : (s.qual === '75' ? 10 : 20);
                     args.push('-q:v', q);
