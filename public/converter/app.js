@@ -25,8 +25,7 @@ const dom = {
     status: document.getElementById('engine-status'),
     convertBtn: document.getElementById('convert-all-btn'),
     downloadAllBtn: document.getElementById('download-all-btn'),
-    docRenderer: document.getElementById('doc-renderer'),
-    stagingArea: document.getElementById('staging-area') // NOUVEAU
+    docRenderer: document.getElementById('doc-renderer')
 };
 
 // --- INIT ENGINE ---
@@ -92,6 +91,7 @@ function renderCard(id, file, type, defaultTarget) {
     const fmtOpts = FORMATS[type].map(f => `<option value="${f}" ${f === defaultTarget ? 'selected' : ''}>${f.toUpperCase()}</option>`).join('');
 
     let settingsHTML = '';
+    
     if (type === 'video') {
         settingsHTML = `
             <select onchange="updateSet('${id}', 'res', this.value)" class="opt-input"><option value="original">Orig Res</option><option value="1080">1080p</option><option value="720">720p</option></select>
@@ -176,18 +176,18 @@ async function processFile(f) {
     try {
         let outBlob = null;
 
-        // --- 1. DOCX -> CAPTURE PARFAITE 1-TO-1 + OCR ---
+        // --- 1. DOCX -> INVISIBLE & PERFECT RENDER -> PDF ---
         if (f.type === 'doc') {
             const arrayBuffer = await f.file.arrayBuffer();
             
-            // 1. Rendu Global (Caché)
+            // 1. Rendu hors écran (left: -9999px)
             dom.docRenderer.innerHTML = "";
             await docx.renderAsync(arrayBuffer, dom.docRenderer, null, { 
                 inWrapper: false, 
                 ignoreWidth: false 
             });
 
-            // Récupérer toutes les balises <section class="docx"> générées
+            // 2. Récupérer les pages originales (PAS DE CLONAGE)
             const pages = Array.from(dom.docRenderer.querySelectorAll('.docx'));
             const totalPages = pages.length;
 
@@ -206,43 +206,42 @@ async function processFile(f) {
                 worker = await Tesseract.createWorker('fra+eng');
             }
 
-            // 2. BOUCLE DE CAPTURE (ISOLATION)
+            // 3. BOUCLE DE CAPTURE (Masquage Dynamique)
             for (let i = 0; i < totalPages; i++) {
                 els.stat.innerText = `Processing Page ${i + 1} of ${totalPages}...`;
                 els.bar.style.width = `${((i + 1) / totalPages) * 100}%`;
 
-                // A. On clone la page actuelle SEULE dans la "Salle de Photo"
-                // Cela garantit que la mise en page n'est affectée par rien d'autre.
-                dom.stagingArea.innerHTML = "";
-                const clonedPage = pages[i].cloneNode(true);
-                dom.stagingArea.appendChild(clonedPage);
+                // A. On cache toutes les pages, sauf la page actuelle
+                pages.forEach((p, idx) => {
+                    p.style.display = idx === i ? 'block' : 'none';
+                });
 
-                // Forcer la hauteur minimale d'une page A4 (1122px) pour éviter les pages blanches/courtes
-                clonedPage.style.minHeight = "1122px"; 
+                // B. On force la taille de la page actuelle
+                const currentPage = pages[i];
+                currentPage.style.minHeight = "1122px"; // Hauteur A4 en pixels
 
-                // B. Capture Haute Résolution (Scale 2.0 est le point parfait entre netteté et performance)
-                const canvas = await html2canvas(clonedPage, {
+                // C. Capture de la page
+                const canvas = await html2canvas(currentPage, {
                     scale: 2.0, 
                     useCORS: true,
                     backgroundColor: "#ffffff",
-                    windowWidth: clonedPage.scrollWidth,
-                    windowHeight: clonedPage.scrollHeight
+                    windowWidth: currentPage.scrollWidth,
+                    windowHeight: currentPage.scrollHeight
                 });
 
-                // C. Ajout au PDF (Correction du Ratio d'aspect)
                 if (i > 0) pdf.addPage();
                 const imgData = canvas.toDataURL('image/jpeg', 0.95);
                 
-                // Calculer la hauteur pour ne jamais écraser l'image
+                // Maintien strict du ratio d'aspect pour éviter l'écrasement
                 const imgHeight = (canvas.height * pdfW) / canvas.width;
                 pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgHeight);
 
-                // D. OCR (Texte sélectionnable)
+                // D. OCR
                 if (worker) {
                     const { data: { text } } = await worker.recognize(canvas);
                     if (text && text.trim().length > 0) {
                         pdf.setFontSize(8);
-                        pdf.setTextColor(255, 255, 255); // Invisible
+                        pdf.setTextColor(255, 255, 255);
                         pdf.text(text, 10, 10, { maxWidth: pdfW - 20 });
                     }
                 }
@@ -252,7 +251,6 @@ async function processFile(f) {
             if (worker) await worker.terminate();
             outBlob = pdf.output('blob');
             dom.docRenderer.innerHTML = ""; 
-            dom.stagingArea.innerHTML = "";
         }
         
         // --- 2. FFMPEG (Video/Image/Audio) ---
