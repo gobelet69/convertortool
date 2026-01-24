@@ -1,19 +1,16 @@
-// --- CONFIGURATION ---
 const { createFFmpeg, fetchFile } = FFmpeg;
 let ffmpeg = null;
 
 const FORMATS = {
     video: ['mp4', 'webm', 'avi', 'mov', 'mkv', 'gif', 'mp3'],
     audio: ['mp3', 'wav', 'aac', 'ogg', 'm4a'],
-    image: ['jpg', 'png', 'webp', 'bmp', 'ico'],
-    doc:   ['pdf']
+    image: ['jpg', 'png', 'webp', 'bmp', 'ico']
 };
 
 const DEFAULTS = {
     video: { res: 'original', fps: 'original', audio: 'keep', qual: 'medium' },
     audio: { bitrate: '128k', channels: 'original' },
-    image: { scale: '100', qual: '90', gray: 'no' },
-    doc:   { } // Mode Isolation Stricte (Anti-Crash)
+    image: { scale: '100', qual: '90', gray: 'no' }
 };
 
 let files = [];
@@ -24,11 +21,9 @@ const dom = {
     empty: document.getElementById('empty-state'),
     status: document.getElementById('engine-status'),
     convertBtn: document.getElementById('convert-all-btn'),
-    downloadAllBtn: document.getElementById('download-all-btn'),
-    docRenderer: document.getElementById('doc-renderer')
+    downloadAllBtn: document.getElementById('download-all-btn')
 };
 
-// --- INIT ENGINE ---
 async function initFFmpeg() {
     try {
         ffmpeg = createFFmpeg({ log: false });
@@ -41,7 +36,6 @@ async function initFFmpeg() {
 }
 initFFmpeg();
 
-// --- DRAG & DROP ---
 ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eName => {
     dom.dropZone.addEventListener(eName, e => { e.preventDefault(); e.stopPropagation(); });
 });
@@ -53,9 +47,7 @@ dom.dropZone.addEventListener('drop', (e) => {
 });
 document.getElementById('file-upload').addEventListener('change', (e) => handleFiles(e.target.files));
 
-// --- GESTION FICHIERS ---
 function getType(file) {
-    if (file.name.endsWith('.docx')) return 'doc';
     if (file.type.startsWith('video/') || ['mkv','avi','mov'].some(x => file.name.endsWith(x))) return 'video';
     if (file.type.startsWith('audio/')) return 'audio';
     if (file.type.startsWith('image/')) return 'image';
@@ -74,7 +66,7 @@ function handleFiles(fileList) {
         dom.convertBtn.classList.remove('opacity-50', 'cursor-not-allowed');
 
         const id = Math.random().toString(36).substr(2, 9);
-        const defaultTarget = type === 'doc' ? 'pdf' : (type === 'video' ? 'mp4' : (type === 'audio' ? 'mp3' : 'png'));
+        const defaultTarget = type === 'video' ? 'mp4' : (type === 'audio' ? 'mp3' : 'png');
         const settings = JSON.parse(JSON.stringify(DEFAULTS[type]));
 
         files.push({ id, file, type, target: defaultTarget, settings, status: 'idle', resultBlob: null });
@@ -87,23 +79,20 @@ function renderCard(id, file, type, defaultTarget) {
     div.id = `card-${id}`;
     div.className = "bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-start gap-4 fade-in relative group";
     
-    const iconMap = { video: '🎬', audio: '🎵', image: '🖼️', doc: '📝' };
+    const iconMap = { video: '🎬', audio: '🎵', image: '🖼️' };
     const fmtOpts = FORMATS[type].map(f => `<option value="${f}" ${f === defaultTarget ? 'selected' : ''}>${f.toUpperCase()}</option>`).join('');
 
     let settingsHTML = '';
     if (type === 'video') {
         settingsHTML = `
             <select onchange="updateSet('${id}', 'res', this.value)" class="opt-input"><option value="original">Orig Res</option><option value="1080">1080p</option><option value="720">720p</option></select>
-            <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input"><option value="medium">Med Q</option><option value="high">High Q</option><option value="low">Low Q</option></select>
+            <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input"><option value="medium">Med Quality</option><option value="high">High Quality</option><option value="low">Low Quality</option></select>
         `;
     } else if (type === 'image') {
         settingsHTML = `
-             <select onchange="updateSet('${id}', 'scale', this.value)" class="opt-input"><option value="100">100% Size</option><option value="75">75% Size</option><option value="50">50% Size</option></select>
-            <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input"><option value="90">High Q</option><option value="75">Med Q</option><option value="50">Low Q</option></select>
-            <select onchange="updateSet('${id}', 'gray', this.value)" class="opt-input"><option value="no">Color</option><option value="yes">B&W</option></select>
+            <select onchange="updateSet('${id}', 'scale', this.value)" class="opt-input"><option value="100">100% Size</option><option value="50">50% Size</option></select>
+            <select onchange="updateSet('${id}', 'qual', this.value)" class="opt-input"><option value="90">High Qual</option><option value="70">Med Qual</option></select>
         `;
-    } else if (type === 'doc') {
-        settingsHTML = `<div class="text-xs text-slate-400 font-bold mt-2">Mode: Isolation Stricte (Anti-Crash)</div>`;
     }
 
     div.innerHTML = `
@@ -141,11 +130,9 @@ function removeFile(id) {
 }
 
 async function convertAll() {
-    if(!ffmpeg && files.some(f => f.type !== 'doc')) return alert("Video engine loading...");
+    if(!ffmpeg) return alert("Engine loading...");
     dom.convertBtn.disabled = true;
     dom.convertBtn.innerHTML = `<span class="spin inline-block mr-2">↻</span> Processing...`;
-
-    console.log("▶ [DEBUT] Lancement de la conversion");
 
     for (const f of files) {
         if (f.status === 'done') continue;
@@ -156,7 +143,6 @@ async function convertAll() {
     checkIfAllDone();
 }
 
-// --- COEUR DE TRAITEMENT ---
 async function processFile(f) {
     const els = {
         bg: document.getElementById(`prog-bg-${f.id}`),
@@ -166,177 +152,72 @@ async function processFile(f) {
     };
 
     els.bg.classList.remove('hidden');
-    els.stat.innerText = "Processing...";
-    els.stat.className = "text-xs font-bold text-iri mt-1 text-right";
+    els.stat.innerText = "Converting...";
 
     try {
-        let outBlob = null;
-
-        // --- 1. DOCX -> ISOLATION STRICTE DES PAGES (1 PAR 1) ---
-        if (f.type === 'doc') {
-            console.log(`\n--- TRAITEMENT DOCX : ${f.file.name} ---`);
-            els.stat.innerText = "1/4 Lecture DOCX...";
-            const arrayBuffer = await f.file.arrayBuffer();
-            
-            dom.docRenderer.classList.remove('hidden');
-            dom.docRenderer.innerHTML = "";
-            dom.docRenderer.style.width = "210mm";
-            
-            console.log("2. Rendu DOCX temporaire...");
-            els.stat.innerText = "2/4 Rendu HTML...";
-            
-            await docx.renderAsync(arrayBuffer, dom.docRenderer, null, { 
-                inWrapper: false, 
-                ignoreWidth: false,
-                useBase64URL: true 
-            });
-
-            // On retire le formatage qui faisait bugger la librairie (les ligatures)
-            dom.docRenderer.style.fontVariantLigatures = "none";
-
-            // On récupère TOUTES les pages et on compte le vrai nombre de pages (ex: 46)
-            const allPages = Array.from(dom.docRenderer.querySelectorAll('.docx'));
-            const totalPages = allPages.length;
-
-            console.log(`✅ ${totalPages} pages détectées. Mise en mémoire cache...`);
-            els.stat.innerText = `3/4 Traitement de ${totalPages} pages...`;
-
-            // L'ETAPE CRUCIALE POUR EVITER LE CRASH ET LE CHEVAUCHEMENT :
-            // On vide le conteneur visuel du navigateur !
-            dom.docRenderer.innerHTML = ""; 
-
-            const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true });
-            const pdfW = 210;
-
-            console.log("3. Capture Page par Page (Le navigateur ne charge qu'une page à la fois)...");
-
-            for (let i = 0; i < totalPages; i++) {
-                els.stat.innerText = `Capture Page ${i + 1}/${totalPages}...`;
-                els.bar.style.width = `${((i + 1) / totalPages) * 100}%`;
-
-                if (i > 0) pdf.addPage();
-
-                // 1. On injecte SEULEMENT la page actuelle. Elle est physiquement seule sur l'écran.
-                dom.docRenderer.appendChild(allPages[i]);
-
-                // 2. Pause pour laisser le navigateur dessiner la page proprement
-                await new Promise(r => setTimeout(r, 150));
-
-                // 3. On prend la photo (le navigateur n'a besoin de mémoire que pour une seule page A4)
-                const canvas = await html2canvas(allPages[i], {
-                    scale: 2.0, 
-                    useCORS: true,
-                    backgroundColor: "#ffffff",
-                    scrollX: 0,
-                    scrollY: 0,
-                    logging: false
-                });
-
-                const imgData = canvas.toDataURL('image/jpeg', 0.80);
-                const imgHeight = (canvas.height * pdfW) / canvas.width;
-                pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgHeight);
-
-                // 4. On détruit la page visuelle pour faire place nette à la suivante
-                dom.docRenderer.innerHTML = ""; 
-            }
-
-            console.log("4. Compilation du fichier PDF...");
-            els.stat.innerText = `4/4 Finalisation...`;
-            outBlob = pdf.output('blob');
-            
-            console.log(`✅ PDF Terminé ! Poids final : ${(outBlob.size / 1024 / 1024).toFixed(2)} MB`);
-            dom.docRenderer.classList.add('hidden');
-        }
+        const inName = `in_${f.id}.${f.file.name.split('.').pop()}`;
+        const outName = `out_${f.id}.${f.target}`;
         
-        // --- 2. FFMPEG (Video/Image/Audio) - INCHANGE ---
-        else {
-            const inName = `in_${f.id}.${f.file.name.split('.').pop()}`;
-            const outName = `out_${f.id}.${f.target}`;
-            
-            ffmpeg.FS('writeFile', inName, await fetchFile(f.file));
-            ffmpeg.setProgress(({ ratio }) => { els.bar.style.width = `${Math.max(5, ratio * 100)}%`; });
+        ffmpeg.FS('writeFile', inName, await fetchFile(f.file));
+        
+        ffmpeg.setProgress(({ ratio }) => {
+            els.bar.style.width = `${Math.max(5, ratio * 100)}%`;
+        });
 
-            let args = ['-i', inName];
-            const s = f.settings;
-
-            if (f.type === 'video') {
-                if (s.res !== 'original') args.push('-vf', `scale=-2:${s.res}`);
-                if (s.qual) {
-                    const crf = { high: '23', medium: '28', low: '35' };
-                    args.push('-crf', crf[s.qual], '-preset', 'ultrafast'); 
-                }
-            }
-            if (f.type === 'image') {
-                let filters = [];
-                if (s.scale !== '100') filters.push(`scale=iw*${s.scale/100}:-1`);
-                if (s.gray === 'yes') filters.push('hue=s=0');
-                if(filters.length > 0) args.push('-vf', filters.join(','));
-                
-                if(f.target === 'jpg' || f.target === 'jpeg') {
-                    let q = s.qual === '90' ? 2 : (s.qual === '75' ? 10 : 20);
-                    args.push('-q:v', q);
-                }
-            }
-            args.push(outName);
-            await ffmpeg.run(...args);
-            const data = ffmpeg.FS('readFile', outName);
-            outBlob = new Blob([data.buffer], { type: `${f.type}/${f.target}` });
-            ffmpeg.FS('unlink', inName);
-            ffmpeg.FS('unlink', outName);
+        let args = ['-i', inName];
+        if (f.type === 'video') {
+            if (f.settings.res !== 'original') args.push('-vf', `scale=-2:${f.settings.res}`);
+            const crf = { high: '18', medium: '28', low: '35' }[f.settings.qual];
+            args.push('-crf', crf);
         }
+        args.push(outName);
 
-        f.resultBlob = outBlob;
+        await ffmpeg.run(...args);
+
+        const data = ffmpeg.FS('readFile', outName);
+        f.resultBlob = new Blob([data.buffer], { type: `${f.type}/${f.target}` });
         f.status = 'done';
         
-        const url = URL.createObjectURL(outBlob);
-        const newName = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + f.target;
+        const url = URL.createObjectURL(f.resultBlob);
         els.act.innerHTML = `
-            <a href="${url}" download="${newName}" class="mt-2 w-full bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold py-2 px-4 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2">
-                <span>⬇ Save</span>
+            <a href="${url}" download="converted_${f.file.name.split('.')[0]}.${f.target}" class="mt-2 w-full bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold py-2 px-4 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2">
+                <span>⬇ Download</span>
             </a>
         `;
-
+        
+        ffmpeg.FS('unlink', inName);
+        ffmpeg.FS('unlink', outName);
     } catch (err) {
-        console.error("❌ ERREUR CRITIQUE :", err);
-        els.stat.innerText = "Error (Voir Console)";
-        els.stat.className = "text-xs font-bold text-red-500 mt-1 text-right";
-        showToast("Erreur conversion : Regarde la console (F12)", true);
+        console.error(err);
+        els.stat.innerText = "Error";
     }
 }
 
 async function downloadAll() {
     const doneFiles = files.filter(f => f.status === 'done' && f.resultBlob);
     if(doneFiles.length === 0) return;
-    dom.downloadAllBtn.innerText = "Zipping...";
-    dom.downloadAllBtn.disabled = true;
+    
     const zip = new JSZip();
     doneFiles.forEach(f => {
-        const name = f.file.name.substring(0, f.file.name.lastIndexOf('.')) + '.' + f.target;
-        zip.file(name, f.resultBlob);
+        zip.file(`converted_${f.file.name.split('.')[0]}.${f.target}`, f.resultBlob);
     });
-    try {
-        const content = await zip.generateAsync({type:"blob"});
-        const url = URL.createObjectURL(content);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = "converted_files.zip";
-        link.click();
-    } catch(e) { showToast("Erreur ZIP", true); }
-    dom.downloadAllBtn.innerText = "📦 Download ZIP";
-    dom.downloadAllBtn.disabled = false;
+    
+    const content = await zip.generateAsync({type:"blob"});
+    const url = URL.createObjectURL(content);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = "converted_files.zip";
+    link.click();
 }
 
 function checkIfAllDone() {
     if (files.some(f => f.status === 'done')) dom.downloadAllBtn.classList.remove('hidden');
-    else dom.downloadAllBtn.classList.add('hidden');
 }
 
 function showToast(msg, isError = false) {
     const t = document.createElement('div');
-    t.className = `fixed bottom-5 right-5 px-6 py-4 rounded-lg shadow-xl text-white font-bold z-50 transform translate-y-20 opacity-0 transition-all duration-300 ${isError ? 'bg-red-500' : 'bg-slate-800'}`;
+    t.className = `fixed bottom-5 right-5 px-6 py-4 rounded-lg shadow-xl text-white font-bold z-50 ${isError ? 'bg-red-500' : 'bg-slate-800'}`;
     t.innerText = msg;
     document.body.appendChild(t);
-    requestAnimationFrame(() => t.classList.remove('translate-y-20', 'opacity-0'));
-    setTimeout(() => { t.classList.add('translate-y-20', 'opacity-0'); setTimeout(() => t.remove(), 300); }, 4000);
+    setTimeout(() => t.remove(), 3000);
 }
